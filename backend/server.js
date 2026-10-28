@@ -10,24 +10,32 @@ const app = express();
 const PORT = parseInt(process.env.PORT || '5000', 10);
 const HOST = process.env.HOST || '0.0.0.0';
 
-// Configured frontend development origins
-const allowedOrigins = (process.env.FRONTEND_URL || 'http://localhost:3000')
+// Configured frontend development and production origins
+const defaultOrigins = [
+  'http://localhost:3000',
+  'http://127.0.0.1:3000',
+  'https://matrixstudio-frontend.onrender.com'
+];
+
+const envOrigins = (process.env.FRONTEND_URL || '')
   .split(',')
-  .map(url => url.trim());
+  .map(url => url.trim())
+  .filter(Boolean);
+
+const allowedOrigins = [...defaultOrigins, ...envOrigins];
 
 const corsOptions = {
   origin: (origin, callback) => {
     // Allow requests with no origin (like ESP32 HTTPClient or cURL/mobile apps)
     if (!origin) return callback(null, true);
 
-    // Check if origin matches configured allowed origins
-    if (allowedOrigins.includes(origin) || allowedOrigins.includes('*')) {
-      return callback(null, true);
-    }
-
-    // Also support local development host variations (e.g. 127.0.0.1 or localhost on common ports)
-    const isLocalhost = /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
-    if (isLocalhost) {
+    // Check if origin matches configured allowed origins, wildcard, or onrender.com domains
+    if (
+      allowedOrigins.includes(origin) ||
+      allowedOrigins.includes('*') ||
+      origin.endsWith('.onrender.com') ||
+      /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)
+    ) {
       return callback(null, true);
     }
 

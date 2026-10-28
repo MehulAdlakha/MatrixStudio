@@ -8,6 +8,7 @@
  */
 
 #include <WiFi.h>
+#include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 #include <Adafruit_NeoPixel.h>
@@ -18,10 +19,10 @@
 const char* WIFI_SSID     = "VANS_EXT";
 const char* WIFI_PASSWORD = "tunaktunak";
 
-const char* BACKEND_BASE_URL = "http://192.168.1.100:5000";
-const char* ENDPOINT_POLL    = "http://192.168.1.100:5000/api/device/poll";
-const char* ENDPOINT_ACK     = "http://192.168.1.100:5000/api/device/ack";
-const char* ENDPOINT_STATUS  = "http://192.168.1.100:5000/api/device/status";
+const char* BACKEND_BASE_URL = "https://matrixstudio.onrender.com";
+const char* ENDPOINT_POLL    = "https://matrixstudio.onrender.com/api/device/poll";
+const char* ENDPOINT_ACK     = "https://matrixstudio.onrender.com/api/device/ack";
+const char* ENDPOINT_STATUS  = "https://matrixstudio.onrender.com/api/device/status";
 
 // =========================================================================
 // Hardware Configuration
@@ -656,11 +657,16 @@ void updateActiveLoop() {
 }
 
 // -------------------------------------------------------------------------
+// -------------------------------------------------------------------------
 // Core 0: Wi-Fi Background Poller (Runs completely independent on Core 0)
 // -------------------------------------------------------------------------
 void networkWorker(void* param) {
+  WiFiClientSecure secClient;
+  secClient.setInsecure(); // Supports Render HTTPS without certificate errors
+
   HTTPClient http;
-  http.setReuse(true); // HTTP Keep-Alive: reduces GET round-trip from 200ms to 12ms!
+  http.setReuse(true); // HTTP Keep-Alive
+
   uint32_t lastPollTime = 0;
   uint32_t lastStatusTime = 0;
 
@@ -673,13 +679,13 @@ void networkWorker(void* param) {
       continue;
     }
 
-    // Poll for new command every 800ms
-    if (now - lastPollTime >= 800) {
+    // Poll for new command every 600ms
+    if (now - lastPollTime >= 600) {
       lastPollTime = now;
 
       String url = String(ENDPOINT_POLL) + "?lastId=" + lastExecutedId;
-      http.begin(url);
-      http.setTimeout(1200);
+      http.begin(secClient, url);
+      http.setTimeout(2500);
 
       int code = http.GET();
       if (code == HTTP_CODE_OK) {
@@ -729,8 +735,10 @@ void networkWorker(void* param) {
             lastExecutedId = cmdId;
 
             // Send ACK
+            WiFiClientSecure ackSecClient;
+            ackSecClient.setInsecure();
             HTTPClient ackHttp;
-            ackHttp.begin(ENDPOINT_ACK);
+            ackHttp.begin(ackSecClient, ENDPOINT_ACK);
             ackHttp.addHeader("Content-Type", "application/json");
             ackHttp.POST("{\"commandId\":\"" + cmdId + "\",\"status\":\"COMPLETED\"}");
             ackHttp.end();
@@ -743,8 +751,10 @@ void networkWorker(void* param) {
     // Heartbeat every 3s
     if (now - lastStatusTime >= 3000) {
       lastStatusTime = now;
+      WiFiClientSecure statSecClient;
+      statSecClient.setInsecure();
       HTTPClient statHttp;
-      statHttp.begin(ENDPOINT_STATUS);
+      statHttp.begin(statSecClient, ENDPOINT_STATUS);
       statHttp.addHeader("Content-Type", "application/json");
       String statBody = "{\"deviceId\":\"ESP32_Matrix\",\"ip\":\"" + WiFi.localIP().toString() + "\",\"rssi\":" + String(WiFi.RSSI()) + ",\"uptimeSec\":" + String(millis() / 1000) + "}";
       statHttp.POST(statBody);
