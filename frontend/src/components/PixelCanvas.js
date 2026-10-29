@@ -105,6 +105,15 @@ export default function PixelCanvas({ pixels, setPixels, onToast }) {
   };
 
   const handleSendToMatrix = async () => {
+    const hasAnyColoredPixel = pixels.some(rgb => rgb[0] > 0 || rgb[1] > 0 || rgb[2] > 0);
+    if (!hasAnyColoredPixel) {
+      onToast({
+        type: 'warning',
+        message: 'Canvas is completely blank! Click "Heart", "Smile", or draw some pixels first.'
+      });
+      return;
+    }
+
     setIsSubmitting(true);
     try {
       const res = await sendCommand('image', { pixels });

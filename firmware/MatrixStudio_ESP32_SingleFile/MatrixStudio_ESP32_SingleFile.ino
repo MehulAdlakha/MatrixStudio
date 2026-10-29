@@ -436,7 +436,8 @@ uint32_t colorWheel(byte pos) {
 void renderMatrixRain() {
   strip.clear();
   for (uint8_t x = 0; x < MATRIX_WIDTH; x++) {
-    if (animStep % rainSpeed[x] == 0) {
+    uint8_t spd = rainSpeed[x] > 0 ? rainSpeed[x] : 1;
+    if (animStep % spd == 0) {
       rainPos[x]++;
       if (rainPos[x] - rainLength[x] >= MATRIX_HEIGHT) {
         rainPos[x] = 0;

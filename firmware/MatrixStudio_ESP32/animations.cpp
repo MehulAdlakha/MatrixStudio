@@ -98,7 +98,8 @@ void AnimationController::renderMatrixRain() {
 
   for (uint8_t x = 0; x < MATRIX_WIDTH; x++) {
     // Only update position every few frames based on column speed
-    if (frameCounter % rainSpeed[x] == 0) {
+    uint8_t spd = rainSpeed[x] > 0 ? rainSpeed[x] : 1;
+    if (frameCounter % spd == 0) {
       rainPos[x]++;
       if (rainPos[x] - rainLength[x] >= MATRIX_HEIGHT) {
         rainPos[x] = 0;
