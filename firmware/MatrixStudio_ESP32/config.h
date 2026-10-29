@@ -6,8 +6,8 @@
 // =========================================================================
 // Wi-Fi Configuration (Station Mode only - NEVER creates an Access Point)
 // =========================================================================
-#define WIFI_SSID       "VANS_EXT"
-#define WIFI_PASSWORD   "tunaktunak"
+#define WIFI_SSID       "vision"
+#define WIFI_PASSWORD   "987654321"
 #define WIFI_RETRY_INTERVAL_MS 5000
 
 // =========================================================================
@@ -15,7 +15,7 @@
 // Use your computer's local network IP address (e.g. 192.168.1.150)
 // To find your IP: run 'ipconfig' (Windows) or 'ifconfig' / 'ip a' (Mac/Linux)
 // =========================================================================
-#define BACKEND_BASE_URL    "http://192.168.1.100:5000"
+#define BACKEND_BASE_URL    "http://10.197.242.140:5000"
 #define ENDPOINT_POLL       "/api/device/poll"
 #define ENDPOINT_ACK        "/api/device/ack"
 #define ENDPOINT_STATUS     "/api/device/status"

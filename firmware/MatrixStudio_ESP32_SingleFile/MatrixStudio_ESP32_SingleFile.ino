@@ -16,13 +16,13 @@
 // =========================================================================
 // Wi-Fi & Backend Configuration
 // =========================================================================
-const char* WIFI_SSID     = "VANS_EXT";
-const char* WIFI_PASSWORD = "tunaktunak";
+const char* WIFI_SSID     = "vision";
+const char* WIFI_PASSWORD = "987654321";
 
-const char* BACKEND_BASE_URL = "http://192.168.1.100:5000";
-const char* ENDPOINT_POLL    = "http://192.168.1.100:5000/api/device/poll";
-const char* ENDPOINT_ACK     = "http://192.168.1.100:5000/api/device/ack";
-const char* ENDPOINT_STATUS  = "http://192.168.1.100:5000/api/device/status";
+const char* BACKEND_BASE_URL = "http://10.197.242.140:5000";
+const char* ENDPOINT_POLL    = "http://10.197.242.140:5000/api/device/poll";
+const char* ENDPOINT_ACK     = "http://10.197.242.140:5000/api/device/ack";
+const char* ENDPOINT_STATUS  = "http://10.197.242.140:5000/api/device/status";
 
 // =========================================================================
 // Hardware Configuration
