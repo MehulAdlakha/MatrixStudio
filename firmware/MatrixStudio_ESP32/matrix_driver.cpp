@@ -496,7 +496,7 @@ void MatrixDriver::updateText(uint32_t now) {
     } else if (scrollMode == SCROLL_RIGHT) {
       scrollX++;
       if (scrollX > MATRIX_WIDTH) {
-        scrollX = -textPixelWidth;
+        scrollX = -6;
       }
     } else if (scrollMode == TEXT_BOUNCE) {
       if (textPixelWidth <= MATRIX_WIDTH) {

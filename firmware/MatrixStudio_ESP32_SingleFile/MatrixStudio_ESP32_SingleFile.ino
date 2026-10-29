@@ -329,6 +329,13 @@ int8_t drawChar(int16_t x, int16_t y, char c, const String& font, uint32_t col, 
         }
       }
       return 5; // 4 width + 1 space
+    } else if (c == ' ') {
+      if (bg != 0) {
+        for (int8_t colIdx = 0; colIdx < 3; colIdx++) {
+          for (int8_t row = 0; row < 7; row++) setPixel(x + colIdx, y + row, bg);
+        }
+      }
+      return 4;
     }
     // Fall back to 5x7 if letter
   }
@@ -362,6 +369,8 @@ int8_t drawChar(int16_t x, int16_t y, char c, const String& font, uint32_t col, 
           setPixel(x + colIdx, y + row, col);
           setPixel(x + colIdx + 1, y + row, col);     // Bold horizontally
           setPixel(x + colIdx, y + row + 1, col);     // Bold vertically
+        } else if (bg != 0) {
+          setPixel(x + colIdx, y + row, bg);
         }
       }
     }
@@ -671,7 +680,7 @@ void updateActiveLoop() {
       }
       else if (currentScrollMode == "scroll_right") {
         scrollX++;
-        if (scrollX > MATRIX_WIDTH) scrollX = -textTotalWidth;
+        if (scrollX > MATRIX_WIDTH) scrollX = -6;
       }
       else if (currentScrollMode == "bounce") {
         if (textTotalWidth <= MATRIX_WIDTH) {
@@ -729,28 +738,36 @@ void networkWorker(void* param) {
   http.setReuse(true); // HTTP Keep-Alive
 
   uint32_t lastPollTime = 0;
-  uint32_t lastStatusTime = 0;
+  bool isHttps = String(ENDPOINT_POLL).startsWith("https://");
+  uint32_t pollInterval = isHttps ? 2500 : 1000;
+  uint16_t reqTimeout = isHttps ? 5000 : 1500;
 
   while (true) {
     uint32_t now = millis();
 
     if (WiFi.status() != WL_CONNECTED) {
+      http.end();
       WiFi.reconnect();
       vTaskDelay(pdMS_TO_TICKS(2000));
       continue;
     }
 
-    // Poll for new command every 1000ms
-    if (now - lastPollTime >= 1000) {
+    // Unified poll: fetches command + reports heartbeat + auto-acks lastId in ONE request!
+    if (now - lastPollTime >= pollInterval) {
       lastPollTime = now;
 
-      String url = String(ENDPOINT_POLL) + "?lastId=" + lastExecutedId;
-      if (url.startsWith("https://")) {
+      String url = String(ENDPOINT_POLL) + 
+                   "?lastId=" + lastExecutedId + 
+                   "&rssi=" + String(WiFi.RSSI()) + 
+                   "&uptime=" + String(millis() / 1000) + 
+                   "&ip=" + WiFi.localIP().toString();
+
+      if (isHttps) {
         http.begin(secClient, url);
       } else {
         http.begin(url);
       }
-      http.setTimeout(1200);
+      http.setTimeout(reqTimeout);
 
       int code = http.GET();
       if (code == HTTP_CODE_OK) {
@@ -836,36 +853,10 @@ void networkWorker(void* param) {
             pendingType = type;
             hasNewCommand = true;
             lastExecutedId = cmdId;
-
-            // Send ACK
-            HTTPClient ackHttp;
-            if (String(ENDPOINT_ACK).startsWith("https://")) {
-              ackHttp.begin(secClient, ENDPOINT_ACK);
-            } else {
-              ackHttp.begin(ENDPOINT_ACK);
-            }
-            ackHttp.addHeader("Content-Type", "application/json");
-            ackHttp.POST("{\"commandId\":\"" + cmdId + "\",\"status\":\"COMPLETED\"}");
-            ackHttp.end();
           }
         }
       }
       http.end();
-    }
-
-    // Telemetry status report every 10s (poll already maintains heartbeat online status)
-    if (now - lastStatusTime >= 10000) {
-      lastStatusTime = now;
-      HTTPClient statHttp;
-      if (String(ENDPOINT_STATUS).startsWith("https://")) {
-        statHttp.begin(secClient, ENDPOINT_STATUS);
-      } else {
-        statHttp.begin(ENDPOINT_STATUS);
-      }
-      statHttp.addHeader("Content-Type", "application/json");
-      String statBody = "{\"deviceId\":\"ESP32_Matrix\",\"ip\":\"" + WiFi.localIP().toString() + "\",\"rssi\":" + String(WiFi.RSSI()) + ",\"uptimeSec\":" + String(millis() / 1000) + "}";
-      statHttp.POST(statBody);
-      statHttp.end();
     }
 
     vTaskDelay(pdMS_TO_TICKS(50));
@@ -920,11 +911,11 @@ void setup() {
     Serial.println(WiFi.localIP());
   }
 
-  // Launch Core 0 Network Task with 16KB stack (Zero-Lag!)
+  // Launch Core 0 Network Task with 20KB stack for robust TLS encryption
   xTaskCreatePinnedToCore(
     networkWorker,
     "netTask",
-    16384,
+    20480,
     NULL,
     1,
     NULL,

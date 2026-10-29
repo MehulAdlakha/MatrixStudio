@@ -99,15 +99,23 @@ router.delete('/commands/history', (req, res) => {
  * Endpoint polled by ESP32 (~500ms) to check for pending unacknowledged commands
  */
 router.get('/device/poll', (req, res) => {
-  const lastId = req.query.lastId;
-  const pending = store.getPendingCommandForDevice(lastId);
+  const { lastId, rssi, uptime, ip } = req.query;
 
-  // Automatically update device activity timestamp on every poll
+  // Auto-acknowledge command as soon as ESP32 reports it as executed
+  if (lastId) {
+    store.acknowledgeCommand(lastId, 'COMPLETED', 'Acknowledged via poll');
+  }
+
+  // Automatically update device activity timestamp and telemetry on every poll
   store.updateDeviceStatus({
     lastSeen: new Date().toISOString(),
-    online: true
+    online: true,
+    ...(rssi ? { rssi: parseInt(rssi, 10) } : {}),
+    ...(uptime ? { uptime: parseInt(uptime, 10) } : {}),
+    ...(ip ? { ip: String(ip) } : {})
   });
 
+  const pending = store.getPendingCommandForDevice(lastId);
   res.json({
     success: true,
     ...pending

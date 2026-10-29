@@ -83,17 +83,26 @@ void networkWorkerTask(void* parameter) {
       continue;
     }
 
-    // 2. Poll Backend for Commands every 600ms
-    if (now - lastPollTime >= DEVICE_POLL_INTERVAL_MS) {
+    // 2. Poll Backend for Commands + Send Telemetry + Auto-Ack
+    bool isHttps = String(ENDPOINT_POLL).startsWith("https://");
+    uint32_t pollInterval = isHttps ? 2500 : 1000;
+    uint16_t reqTimeout = isHttps ? 5000 : 1500;
+
+    if (now - lastPollTime >= pollInterval) {
       lastPollTime = now;
 
-      String pollUrl = String(BACKEND_BASE_URL) + ENDPOINT_POLL + "?lastId=" + lastExecutedCommandId;
-      if (pollUrl.startsWith("https://")) {
+      String pollUrl = String(BACKEND_BASE_URL) + ENDPOINT_POLL +
+                       "?lastId=" + lastExecutedCommandId +
+                       "&rssi=" + String(WiFi.RSSI()) +
+                       "&uptime=" + String(millis() / 1000) +
+                       "&ip=" + WiFi.localIP().toString();
+
+      if (isHttps) {
         http.begin(secClient, pollUrl);
       } else {
         http.begin(pollUrl);
       }
-      http.setTimeout(1200);
+      http.setTimeout(reqTimeout);
 
       int httpCode = http.GET();
       if (httpCode == HTTP_CODE_OK) {
@@ -183,38 +192,10 @@ void networkWorkerTask(void* parameter) {
             // Flag Core 1 to apply new effect immediately
             pendingCmd.hasNew = true;
             lastExecutedCommandId = cmdId;
-
-            // Send instant ACK to backend
-            HTTPClient ackHttp;
-            String ackUrl = String(BACKEND_BASE_URL) + ENDPOINT_ACK;
-            if (ackUrl.startsWith("https://")) {
-              ackHttp.begin(secClient, ackUrl);
-            } else {
-              ackHttp.begin(ackUrl);
-            }
-            ackHttp.addHeader("Content-Type", "application/json");
-            ackHttp.POST("{\"commandId\":\"" + cmdId + "\",\"status\":\"COMPLETED\",\"message\":\"Applied to matrix\"}");
-            ackHttp.end();
           }
         }
       }
       http.end();
-    }
-
-    // 3. Send Heartbeat Telemetry every 10s
-    if (now - lastStatusTime >= DEVICE_STATUS_INTERVAL_MS) {
-      lastStatusTime = now;
-      HTTPClient statHttp;
-      String statUrl = String(BACKEND_BASE_URL) + ENDPOINT_STATUS;
-      if (statUrl.startsWith("https://")) {
-        statHttp.begin(secClient, statUrl);
-      } else {
-        statHttp.begin(statUrl);
-      }
-      statHttp.addHeader("Content-Type", "application/json");
-      String statBody = "{\"deviceId\":\"ESP32_Matrix\",\"ip\":\"" + WiFi.localIP().toString() + "\",\"rssi\":" + String(WiFi.RSSI()) + ",\"uptimeSec\":" + String(millis() / 1000) + ",\"mode\":\"" + matrix.getModeString() + "\"}";
-      statHttp.POST(statBody);
-      statHttp.end();
     }
 
     // Small delay to yield Core 0 RTOS
@@ -271,11 +252,11 @@ void setup() {
     Serial.println("⚠️ Wi-Fi not connected yet. Core 0 will auto-reconnect.");
   }
 
-  // Pin Network Worker to Core 0 (Zero-Lag Dual-Core Architecture)
+  // Pin Network Worker to Core 0 with 20KB stack for robust TLS encryption
   xTaskCreatePinnedToCore(
     networkWorkerTask,
     "NetWorker",
-    16384,
+    20480,
     NULL,
     1,
     NULL,
