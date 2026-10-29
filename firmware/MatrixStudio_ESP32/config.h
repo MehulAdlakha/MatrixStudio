@@ -14,8 +14,8 @@
 // Backend Server Configuration
 // Use your computer's local network IP address (e.g. 192.168.1.150)
 // To find your IP: run 'ipconfig' (Windows) or 'ifconfig' / 'ip a' (Mac/Linux)
-// =========================================================================
-#define BACKEND_BASE_URL    "http://10.197.242.140:5000"
+// Live Production Backend URL on Render
+#define BACKEND_BASE_URL    "https://matrixstudio.onrender.com"
 #define ENDPOINT_POLL       "/api/device/poll"
 #define ENDPOINT_ACK        "/api/device/ack"
 #define ENDPOINT_STATUS     "/api/device/status"
