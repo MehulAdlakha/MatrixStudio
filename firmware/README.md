@@ -6,17 +6,16 @@ Firmware for the ESP32 microcontroller driving a **30×10 WS2812B Addressable RG
 
 | Component | Specification |
 |-----------|---------------|
-| Microcontroller | ESP32 DevKit V1 (DOIT) / NodeMCU ESP8266 / ESP32 |
+| Microcontroller | DOIT ESP32 DevKit V1 (ESP-WROOM-32) / Standard ESP32 |
 | LED Type | WS2812B / NeoPixel (800 kHz protocol) |
 | Dimensions | 30 columns × 10 rows (300 total LEDs) |
-| Data Pin | **D4 (GPIO 4)** on ESP32 DevKit V1 / **D2** on ESP8266 |
+| Data Pin | **D4 (GPIO 4)** on ESP32 DevKit V1 |
 | Power Supply | 5V external power supply (recommend 5V 4A-10A for 300 LEDs) |
 | Common Ground | Microcontroller GND **must be tied to 5V power supply GND** |
 
 ### Firmware Folders:
 - **`MatrixStudio_ESP32_DevKit_V1/`**: Dedicated, standalone single-file edition for **DOIT ESP32 DevKit V1** (D4 data, D2 status LED, dual-core, NVS persistence).
 - **`MatrixStudio_ESP32_SingleFile/`**: Universal single-file edition for standard ESP32 boards.
-- **`MatrixStudio_ESP8266_SingleFile/`**: Single-file edition for **ESP8266 NodeMCU** (D2 data, cooperative non-blocking WDT engine, EEPROM persistence).
 - **`MatrixStudio_ESP32/`**: Multi-file modular edition.
 
 ---

@@ -101,8 +101,6 @@ d:\led matrix\
 │   │   └── MatrixStudio_ESP32_DevKit_V1.ino # Dedicated single-file for DOIT ESP32 DevKit V1 (D4 data, D2 status LED)
 │   ├── MatrixStudio_ESP32_SingleFile/
 │   │   └── MatrixStudio_ESP32_SingleFile.ino # All-in-one single-file edition for standard ESP32
-│   ├── MatrixStudio_ESP8266_SingleFile/
-│   │   └── MatrixStudio_ESP8266_SingleFile.ino # Dedicated single-file for ESP8266 NodeMCU (D2 data)
 │   └── MatrixStudio_ESP32/
 │       ├── MatrixStudio_ESP32.ino # Main Arduino sketch (modular multi-file)
 │       ├── config.h          # Wi-Fi SSID, backend URL, GPIO pin, zigzag flags
