@@ -19,10 +19,10 @@
 const char* WIFI_SSID     = "VANS_EXT";
 const char* WIFI_PASSWORD = "tunaktunak";
 
-const char* BACKEND_BASE_URL = "https://matrixstudio.onrender.com";
-const char* ENDPOINT_POLL    = "https://matrixstudio.onrender.com/api/device/poll";
-const char* ENDPOINT_ACK     = "https://matrixstudio.onrender.com/api/device/ack";
-const char* ENDPOINT_STATUS  = "https://matrixstudio.onrender.com/api/device/status";
+const char* BACKEND_BASE_URL = "http://192.168.1.100:5000";
+const char* ENDPOINT_POLL    = "http://192.168.1.100:5000/api/device/poll";
+const char* ENDPOINT_ACK     = "http://192.168.1.100:5000/api/device/ack";
+const char* ENDPOINT_STATUS  = "http://192.168.1.100:5000/api/device/status";
 
 // =========================================================================
 // Hardware Configuration
@@ -684,8 +684,12 @@ void networkWorker(void* param) {
       lastPollTime = now;
 
       String url = String(ENDPOINT_POLL) + "?lastId=" + lastExecutedId;
-      http.begin(secClient, url);
-      http.setTimeout(2500);
+      if (url.startsWith("https://")) {
+        http.begin(secClient, url);
+      } else {
+        http.begin(url);
+      }
+      http.setTimeout(1200);
 
       int code = http.GET();
       if (code == HTTP_CODE_OK) {
@@ -735,10 +739,12 @@ void networkWorker(void* param) {
             lastExecutedId = cmdId;
 
             // Send ACK
-            WiFiClientSecure ackSecClient;
-            ackSecClient.setInsecure();
             HTTPClient ackHttp;
-            ackHttp.begin(ackSecClient, ENDPOINT_ACK);
+            if (String(ENDPOINT_ACK).startsWith("https://")) {
+              ackHttp.begin(secClient, ENDPOINT_ACK);
+            } else {
+              ackHttp.begin(ENDPOINT_ACK);
+            }
             ackHttp.addHeader("Content-Type", "application/json");
             ackHttp.POST("{\"commandId\":\"" + cmdId + "\",\"status\":\"COMPLETED\"}");
             ackHttp.end();
@@ -751,10 +757,12 @@ void networkWorker(void* param) {
     // Heartbeat every 3s
     if (now - lastStatusTime >= 3000) {
       lastStatusTime = now;
-      WiFiClientSecure statSecClient;
-      statSecClient.setInsecure();
       HTTPClient statHttp;
-      statHttp.begin(statSecClient, ENDPOINT_STATUS);
+      if (String(ENDPOINT_STATUS).startsWith("https://")) {
+        statHttp.begin(secClient, ENDPOINT_STATUS);
+      } else {
+        statHttp.begin(ENDPOINT_STATUS);
+      }
       statHttp.addHeader("Content-Type", "application/json");
       String statBody = "{\"deviceId\":\"ESP32_Matrix\",\"ip\":\"" + WiFi.localIP().toString() + "\",\"rssi\":" + String(WiFi.RSSI()) + ",\"uptimeSec\":" + String(millis() / 1000) + "}";
       statHttp.POST(statBody);

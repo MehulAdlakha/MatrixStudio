@@ -9,7 +9,7 @@ const getBackendUrl = () => {
     const storedUrl = localStorage.getItem('matrix_backend_url');
     if (storedUrl) return storedUrl.replace(/\/+$/, '');
   }
-  return (process.env.NEXT_PUBLIC_BACKEND_URL || 'https://matrixstudio.onrender.com').replace(/\/+$/, '');
+  return (process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:5000').replace(/\/+$/, '');
 };
 
 export const setCustomBackendUrl = (url) => {

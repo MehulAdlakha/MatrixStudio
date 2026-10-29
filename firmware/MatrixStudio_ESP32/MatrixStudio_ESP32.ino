@@ -56,17 +56,17 @@ uint32_t parseColor(JsonVariant colorVar, uint32_t defaultColor);
 void applyCommand();
 
 // =========================================================================
-// Core 0: Dedicated Wi-Fi & Network Worker Task (Supports Render HTTPS!)
+// Core 0: Dedicated Wi-Fi & Network Worker Task (Localhost & Cloud Ready)
 // =========================================================================
 void networkWorkerTask(void* parameter) {
-  WiFiClientSecure secClient;
-  secClient.setInsecure(); // Bypass cert verification for cloud endpoints like Render
-
   HTTPClient http;
   http.setReuse(true); // HTTP Keep-Alive
 
   uint32_t lastPollTime = 0;
   uint32_t lastStatusTime = 0;
+
+  WiFiClientSecure secClient;
+  secClient.setInsecure();
 
   while (true) {
     uint32_t now = millis();
@@ -83,8 +83,12 @@ void networkWorkerTask(void* parameter) {
       lastPollTime = now;
 
       String pollUrl = String(BACKEND_BASE_URL) + ENDPOINT_POLL + "?lastId=" + lastExecutedCommandId;
-      http.begin(secClient, pollUrl);
-      http.setTimeout(2500);
+      if (pollUrl.startsWith("https://")) {
+        http.begin(secClient, pollUrl);
+      } else {
+        http.begin(pollUrl);
+      }
+      http.setTimeout(1200);
 
       int httpCode = http.GET();
       if (httpCode == HTTP_CODE_OK) {
@@ -137,10 +141,13 @@ void networkWorkerTask(void* parameter) {
             lastExecutedCommandId = cmdId;
 
             // Send instant ACK to backend
-            WiFiClientSecure ackSecClient;
-            ackSecClient.setInsecure();
             HTTPClient ackHttp;
-            ackHttp.begin(ackSecClient, String(BACKEND_BASE_URL) + ENDPOINT_ACK);
+            String ackUrl = String(BACKEND_BASE_URL) + ENDPOINT_ACK;
+            if (ackUrl.startsWith("https://")) {
+              ackHttp.begin(secClient, ackUrl);
+            } else {
+              ackHttp.begin(ackUrl);
+            }
             ackHttp.addHeader("Content-Type", "application/json");
             ackHttp.POST("{\"commandId\":\"" + cmdId + "\",\"status\":\"COMPLETED\",\"message\":\"Applied to matrix\"}");
             ackHttp.end();
@@ -153,10 +160,13 @@ void networkWorkerTask(void* parameter) {
     // 3. Send Heartbeat Telemetry every 3s
     if (now - lastStatusTime >= DEVICE_STATUS_INTERVAL_MS) {
       lastStatusTime = now;
-      WiFiClientSecure statSecClient;
-      statSecClient.setInsecure();
       HTTPClient statHttp;
-      statHttp.begin(statSecClient, String(BACKEND_BASE_URL) + ENDPOINT_STATUS);
+      String statUrl = String(BACKEND_BASE_URL) + ENDPOINT_STATUS;
+      if (statUrl.startsWith("https://")) {
+        statHttp.begin(secClient, statUrl);
+      } else {
+        statHttp.begin(statUrl);
+      }
       statHttp.addHeader("Content-Type", "application/json");
       String statBody = "{\"deviceId\":\"ESP32_Matrix\",\"ip\":\"" + WiFi.localIP().toString() + "\",\"rssi\":" + String(WiFi.RSSI()) + ",\"uptimeSec\":" + String(millis() / 1000) + ",\"mode\":\"" + matrix.getModeString() + "\"}";
       statHttp.POST(statBody);

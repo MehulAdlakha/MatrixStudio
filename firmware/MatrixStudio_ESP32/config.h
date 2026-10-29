@@ -15,7 +15,7 @@
 // Use your computer's local network IP address (e.g. 192.168.1.150)
 // To find your IP: run 'ipconfig' (Windows) or 'ifconfig' / 'ip a' (Mac/Linux)
 // =========================================================================
-#define BACKEND_BASE_URL    "https://matrixstudio.onrender.com"
+#define BACKEND_BASE_URL    "http://192.168.1.100:5000"
 #define ENDPOINT_POLL       "/api/device/poll"
 #define ENDPOINT_ACK        "/api/device/ack"
 #define ENDPOINT_STATUS     "/api/device/status"
