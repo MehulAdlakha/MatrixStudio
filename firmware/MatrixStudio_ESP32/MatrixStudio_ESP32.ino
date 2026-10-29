@@ -98,7 +98,17 @@ void networkWorkerTask(void* parameter) {
       int httpCode = http.GET();
       if (httpCode == HTTP_CODE_OK) {
         String payload = http.getString();
-        DynamicJsonDocument doc(32768); // 32KB buffer for 300 RGB pixel arrays
+
+        // FAST PATH: If no new command, exit immediately without ANY heap allocation!
+        if (payload.indexOf("\"hasCommand\":true") == -1) {
+          http.end();
+          vTaskDelay(pdMS_TO_TICKS(50));
+          continue;
+        }
+
+        // SLOW PATH: New command arrived! Allocate 32KB only for image pixel arrays, else 2KB
+        bool isImage = (payload.indexOf("\"image\"") != -1);
+        DynamicJsonDocument doc(isImage ? 32768 : 2048);
         DeserializationError error = deserializeJson(doc, payload);
 
         if (!error && doc["hasCommand"].as<bool>()) {
@@ -191,7 +201,7 @@ void networkWorkerTask(void* parameter) {
       http.end();
     }
 
-    // 3. Send Heartbeat Telemetry every 3s
+    // 3. Send Heartbeat Telemetry every 10s
     if (now - lastStatusTime >= DEVICE_STATUS_INTERVAL_MS) {
       lastStatusTime = now;
       HTTPClient statHttp;
@@ -265,7 +275,7 @@ void setup() {
   xTaskCreatePinnedToCore(
     networkWorkerTask,
     "NetWorker",
-    8192,
+    16384,
     NULL,
     1,
     NULL,
@@ -296,7 +306,7 @@ void loop() {
   }
 
   // Micro delay to yield Core 1
-  delay(1);
+  yield();
 }
 
 // =========================================================================

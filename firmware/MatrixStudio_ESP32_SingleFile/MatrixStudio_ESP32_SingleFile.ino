@@ -673,11 +673,24 @@ void updateActiveLoop() {
         if (scrollX > MATRIX_WIDTH) scrollX = -textTotalWidth;
       }
       else if (currentScrollMode == "bounce") {
-        scrollX += bounceDir;
-        int16_t minLimit = (textTotalWidth > MATRIX_WIDTH) ? (MATRIX_WIDTH - textTotalWidth) : 0;
-        int16_t maxLimit = (textTotalWidth < MATRIX_WIDTH) ? (MATRIX_WIDTH - textTotalWidth) : 0;
-        if (scrollX <= minLimit || scrollX >= maxLimit) {
-          bounceDir = -bounceDir;
+        if (textTotalWidth <= MATRIX_WIDTH) {
+          scrollX += bounceDir;
+          if (scrollX >= (MATRIX_WIDTH - textTotalWidth)) {
+            scrollX = MATRIX_WIDTH - textTotalWidth;
+            bounceDir = -1;
+          } else if (scrollX <= 0) {
+            scrollX = 0;
+            bounceDir = 1;
+          }
+        } else {
+          scrollX += bounceDir;
+          if (scrollX <= (MATRIX_WIDTH - textTotalWidth)) {
+            scrollX = MATRIX_WIDTH - textTotalWidth;
+            bounceDir = 1;
+          } else if (scrollX >= 0) {
+            scrollX = 0;
+            bounceDir = -1;
+          }
         }
       }
 
@@ -726,8 +739,8 @@ void networkWorker(void* param) {
       continue;
     }
 
-    // Poll for new command every 600ms
-    if (now - lastPollTime >= 600) {
+    // Poll for new command every 1000ms
+    if (now - lastPollTime >= 1000) {
       lastPollTime = now;
 
       String url = String(ENDPOINT_POLL) + "?lastId=" + lastExecutedId;
@@ -741,7 +754,17 @@ void networkWorker(void* param) {
       int code = http.GET();
       if (code == HTTP_CODE_OK) {
         String body = http.getString();
-        DynamicJsonDocument doc(32768); // 32KB buffer to handle 300-pixel RGB arrays
+
+        // FAST PATH: If no new command, exit immediately without ANY heap allocation!
+        if (body.indexOf("\"hasCommand\":true") == -1) {
+          http.end();
+          vTaskDelay(pdMS_TO_TICKS(50));
+          continue;
+        }
+
+        // SLOW PATH: New command arrived! Allocate 32KB only for image pixel arrays, else 2KB
+        bool isImage = (body.indexOf("\"image\"") != -1);
+        DynamicJsonDocument doc(isImage ? 32768 : 2048);
         DeserializationError err = deserializeJson(doc, body);
 
         if (!err && doc["hasCommand"].as<bool>()) {
@@ -752,8 +775,6 @@ void networkWorker(void* param) {
             String type = cmd["type"].as<String>();
             JsonObject params = cmd["params"];
             if (params.isNull()) params = cmd["payload"];
-
-            pendingType = type;
 
             if (type == "text") {
               pendingText = params["text"].as<String>();
@@ -811,6 +832,7 @@ void networkWorker(void* param) {
               pendingHasMirrorUpdate = true;
             }
 
+            pendingType = type;
             hasNewCommand = true;
             lastExecutedId = cmdId;
 
@@ -830,8 +852,8 @@ void networkWorker(void* param) {
       http.end();
     }
 
-    // Heartbeat every 3s
-    if (now - lastStatusTime >= 3000) {
+    // Telemetry status report every 10s (poll already maintains heartbeat online status)
+    if (now - lastStatusTime >= 10000) {
       lastStatusTime = now;
       HTTPClient statHttp;
       if (String(ENDPOINT_STATUS).startsWith("https://")) {
@@ -897,11 +919,11 @@ void setup() {
     Serial.println(WiFi.localIP());
   }
 
-  // Launch Core 0 Network Task (Zero-Lag!)
+  // Launch Core 0 Network Task with 16KB stack (Zero-Lag!)
   xTaskCreatePinnedToCore(
     networkWorker,
     "netTask",
-    8192,
+    16384,
     NULL,
     1,
     NULL,
@@ -930,5 +952,5 @@ void loop() {
 
   // Run the active effect in endless loop
   updateActiveLoop();
-  delay(1);
+  yield();
 }

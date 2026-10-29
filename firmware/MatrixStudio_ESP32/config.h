@@ -48,7 +48,7 @@
 // =========================================================================
 // Polling and Telemetry Timers
 // =========================================================================
-#define DEVICE_POLL_INTERVAL_MS   500   // Poll backend for commands every ~500ms
-#define DEVICE_STATUS_INTERVAL_MS 3000  // Send heartbeat / telemetry every 3s
+#define DEVICE_POLL_INTERVAL_MS   1000  // Poll backend for commands every 1000ms
+#define DEVICE_STATUS_INTERVAL_MS 10000 // Send heartbeat / telemetry every 10s
 
 #endif // CONFIG_H

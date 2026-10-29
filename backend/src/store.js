@@ -75,10 +75,18 @@ class MatrixStore {
   getPendingCommandForDevice(lastId) {
     if (this.currentCommand) {
       const isUnacked = !this.currentCommand.acknowledged;
-      const isDifferent = lastId && this.currentCommand.id !== lastId;
+      const isDifferent = Boolean(lastId && this.currentCommand.id !== lastId);
+      const isFirstPoll = !lastId;
+
+      if (isUnacked || isDifferent || isFirstPoll) {
+        return {
+          hasCommand: true,
+          command: this.currentCommand
+        };
+      }
       return {
-        hasCommand: isUnacked || isDifferent || true,
-        command: this.currentCommand
+        hasCommand: false,
+        currentCommandId: this.currentCommand.id
       };
     }
     return {
