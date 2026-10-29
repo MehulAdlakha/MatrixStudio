@@ -308,8 +308,15 @@ inline void setPixel(int16_t x, int16_t y, uint32_t c) {
   }
 }
 
+// WS2812B Reset Latch Safeguard: Guarantees >300µs silence between frames
+// so intermediate pixels do not interpret false resets or shift bits downstream.
+inline void showStrip() {
+  delayMicroseconds(350);
+  strip.show();
+}
+
 // -------------------------------------------------------------------------
-// Glyph Renderers for All 4 Fonts
+// Glyph Renderers for All 4 Fonts (With Clean Spacing Isolation)
 // -------------------------------------------------------------------------
 int8_t drawChar(int16_t x, int16_t y, char c, const String& font, uint32_t col, uint32_t bg) {
   // 1. Digital Clock font for digits and colons
@@ -328,12 +335,14 @@ int8_t drawChar(int16_t x, int16_t y, char c, const String& font, uint32_t col, 
           else if (bg != 0) setPixel(x + colIdx, y + row, bg);
         }
       }
+      // Guarantee inter-character spacing column is cleanly cleared
+      for (int8_t row = 0; row < 7; row++) {
+        setPixel(x + 4, y + row, bg);
+      }
       return 5; // 4 width + 1 space
     } else if (c == ' ') {
-      if (bg != 0) {
-        for (int8_t colIdx = 0; colIdx < 3; colIdx++) {
-          for (int8_t row = 0; row < 7; row++) setPixel(x + colIdx, y + row, bg);
-        }
+      for (int8_t colIdx = 0; colIdx < 4; colIdx++) {
+        for (int8_t row = 0; row < 7; row++) setPixel(x + colIdx, y + row, bg);
       }
       return 4;
     }
@@ -354,10 +363,14 @@ int8_t drawChar(int16_t x, int16_t y, char c, const String& font, uint32_t col, 
         else if (bg != 0) setPixel(x + colIdx, y + row + 2, bg);
       }
     }
+    // Guarantee inter-character spacing column is cleanly cleared
+    for (int8_t row = 0; row < 7; row++) {
+      setPixel(x + 3, y + row, bg);
+    }
     return 4; // 3 width + 1 space
   }
 
-  // 3. Cyber Bold font (5x7 thickened)
+  // 3. Cyber Bold font (5x7 thickened cleanly without bleeding into gaps or below baseline)
   if (font == "bold") {
     if (c < 32 || c > 126) c = ' ';
     uint16_t offset = (c - 32) * 5;
@@ -367,14 +380,20 @@ int8_t drawChar(int16_t x, int16_t y, char c, const String& font, uint32_t col, 
       for (int8_t row = 0; row < 7; row++) {
         if (bits & (1 << row)) {
           setPixel(x + colIdx, y + row, col);
-          setPixel(x + colIdx + 1, y + row, col);     // Bold horizontally
-          setPixel(x + colIdx, y + row + 1, col);     // Bold vertically
+          // Bold horizontally within glyph boundary only (never bleed into spacing gap)
+          if (colIdx < 4) {
+            setPixel(x + colIdx + 1, y + row, col);
+          }
         } else if (bg != 0) {
           setPixel(x + colIdx, y + row, bg);
         }
       }
     }
-    return 7; // 6 width + 1 space
+    // Guarantee inter-character spacing column is cleanly cleared
+    for (int8_t row = 0; row < 7; row++) {
+      setPixel(x + 5, y + row, bg);
+    }
+    return 6; // 5 width + 1 clean space
   }
 
   // 4. Standard 5x7 Font (Supports all ASCII 32 to 126!)
@@ -388,6 +407,10 @@ int8_t drawChar(int16_t x, int16_t y, char c, const String& font, uint32_t col, 
       else if (bg != 0) setPixel(x + colIdx, y + row, bg);
     }
   }
+  // Guarantee inter-character spacing column is cleanly cleared
+  for (int8_t row = 0; row < 7; row++) {
+    setPixel(x + 5, y + row, bg);
+  }
   return 6; // 5 width + 1 space
 }
 
@@ -395,7 +418,7 @@ int16_t calculateTextWidth(const String& txt, const String& font) {
   int16_t w = 0;
   for (size_t i = 0; i < txt.length(); i++) {
     if (font == "mini") w += 4;
-    else if (font == "bold") w += 7;
+    else if (font == "bold") w += 6;
     else if (font == "digital" && ((txt[i] >= '0' && txt[i] <= '9') || txt[i] == ':' || txt[i] == '-')) w += 5;
     else w += 6;
   }
@@ -470,7 +493,7 @@ void renderMatrixRain() {
       }
     }
   }
-  strip.show();
+  showStrip();
 }
 
 void renderFire() {
@@ -505,7 +528,7 @@ void renderFire() {
       setPixel(x, y, r, g, b);
     }
   }
-  strip.show();
+  showStrip();
 }
 
 void renderPulse() {
@@ -517,7 +540,7 @@ void renderPulse() {
   for (uint16_t i = 0; i < NUM_LEDS; i++) {
     strip.setPixelColor(i, strip.Color(r, g, b));
   }
-  strip.show();
+  showStrip();
 }
 
 void renderStarfield() {
@@ -528,7 +551,7 @@ void renderStarfield() {
     uint32_t c = (rand() % 2 == 0) ? animColor1 : animColor2;
     setPixel(x, y, c);
   }
-  strip.show();
+  showStrip();
 }
 
 void renderColorWipe() {
@@ -539,14 +562,14 @@ void renderColorWipe() {
   for (uint8_t y = 0; y < MATRIX_HEIGHT; y++) {
     setPixel(col, y, color);
   }
-  strip.show();
+  showStrip();
 }
 
 void renderRainbow() {
   for (uint16_t i = 0; i < NUM_LEDS; i++) {
     strip.setPixelColor(i, colorWheel((i * 256 / NUM_LEDS + animStep * 2) & 255));
   }
-  strip.show();
+  showStrip();
 }
 
 // -------------------------------------------------------------------------
@@ -566,11 +589,11 @@ void applyPendingCommand() {
         uint8_t y = i / MATRIX_WIDTH;
         setPixel(x, y, pendingImagePixels[i]);
       }
-      strip.show();
+      showStrip();
     } else if (currentMode == "text" && (currentScrollMode == "static" || currentScrollMode == "blink")) {
       strip.clear();
       renderString(scrollX, textYOffset, currentText, currentFont, textColor, textBgColor);
-      strip.show();
+      showStrip();
     }
   }
 
@@ -580,7 +603,6 @@ void applyPendingCommand() {
 
   currentMode = pendingType;
   strip.clear();
-  strip.show();
 
   if (currentMode == "text") {
     currentText = pendingText;
@@ -612,8 +634,9 @@ void applyPendingCommand() {
 
     blinkVisible = true;
     lastBlinkToggle = millis();
+    strip.clear();
     renderString(scrollX, textYOffset, currentText, currentFont, textColor, textBgColor);
-    strip.show();
+    showStrip();
   }
   else if (currentMode == "animation") {
     currentAnimation = pendingAnimName;
@@ -635,15 +658,15 @@ void applyPendingCommand() {
       uint8_t y = i / MATRIX_WIDTH;
       setPixel(x, y, pendingImagePixels[i]);
     }
-    strip.show();
+    showStrip();
   }
   else if (currentMode == "brightness") {
     strip.setBrightness(pendingBrightness);
-    strip.show();
+    showStrip();
   }
   else if (currentMode == "clear") {
     strip.clear();
-    strip.show();
+    showStrip();
   }
 }
 
@@ -665,7 +688,7 @@ void updateActiveLoop() {
         if (blinkVisible) {
           renderString(scrollX, textYOffset, currentText, currentFont, textColor, textBgColor);
         }
-        strip.show();
+        showStrip();
       }
       return;
     }
@@ -706,7 +729,7 @@ void updateActiveLoop() {
 
       strip.clear();
       renderString(scrollX, textYOffset, currentText, currentFont, textColor, textBgColor);
-      strip.show();
+      showStrip();
     }
   }
 
@@ -877,18 +900,18 @@ void setup() {
   strip.begin();
   strip.setBrightness(SAFE_BRIGHTNESS);
   strip.clear();
-  strip.show();
+  showStrip();
 
   // Fast boot splash
   for (uint8_t x = 0; x < MATRIX_WIDTH; x++) {
     for (uint8_t y = 0; y < MATRIX_HEIGHT; y++) {
       setPixel(x, y, 0, 240, 255);
     }
-    strip.show();
+    showStrip();
     delay(8);
     strip.clear();
   }
-  strip.show();
+  showStrip();
 
   WiFi.mode(WIFI_STA);
   WiFi.softAPdisconnect(true);

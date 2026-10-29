@@ -216,6 +216,7 @@ void MatrixDriver::clear() {
 }
 
 void MatrixDriver::show() {
+  delayMicroseconds(350); // WS2812B Reset Latch Safeguard (>300µs)
   strip.show();
 }
 
@@ -318,7 +319,7 @@ void MatrixDriver::drawImage(JsonArray pixels) {
 }
 
 // -------------------------------------------------------------------------
-// Draw Character across all 4 font profiles
+// Draw Character across all 4 font profiles (With Clean Spacing Isolation)
 // -------------------------------------------------------------------------
 int8_t MatrixDriver::drawChar(int16_t x, int16_t y, char c, TextFont font, uint32_t color, uint32_t bgColor) {
   // 1. Digital Clock Font (Digits, ':', '-')
@@ -340,7 +341,16 @@ int8_t MatrixDriver::drawChar(int16_t x, int16_t y, char c, TextFont font, uint3
           }
         }
       }
+      // Guarantee inter-character spacing column is cleanly cleared
+      for (int8_t row = 0; row < 7; row++) {
+        setPixel(x + 4, y + row, bgColor);
+      }
       return 5; // 4 width + 1 spacing
+    } else if (c == ' ') {
+      for (int8_t col = 0; col < 4; col++) {
+        for (int8_t row = 0; row < 7; row++) setPixel(x + col, y + row, bgColor);
+      }
+      return 4;
     }
     // For non-digits in digital font, fall back smoothly to 5x7!
   }
@@ -362,10 +372,14 @@ int8_t MatrixDriver::drawChar(int16_t x, int16_t y, char c, TextFont font, uint3
         }
       }
     }
+    // Guarantee inter-character spacing column is cleanly cleared
+    for (int8_t row = 0; row < 7; row++) {
+      setPixel(x + 3, y + row, bgColor);
+    }
     return 4; // 3 width + 1 spacing
   }
 
-  // 3. Cyber Bold Font (Thickened 5x7)
+  // 3. Cyber Bold Font (Thickened 5x7 cleanly without bleeding into gaps)
   if (font == FONT_BOLD) {
     if (c < 32 || c > 126) c = ' ';
     uint16_t offset = (c - 32) * 5;
@@ -375,14 +389,20 @@ int8_t MatrixDriver::drawChar(int16_t x, int16_t y, char c, TextFont font, uint3
       for (int8_t row = 0; row < 7; row++) {
         if (bits & (1 << row)) {
           setPixel(x + col, y + row, color);
-          setPixel(x + col + 1, y + row, color);     // Horizontal bold
-          setPixel(x + col, y + row + 1, color);     // Vertical bold
+          // Bold horizontally within glyph boundary only (never bleed into spacing gap)
+          if (col < 4) {
+            setPixel(x + col + 1, y + row, color);
+          }
         } else if (bgColor != 0) {
           setPixel(x + col, y + row, bgColor);
         }
       }
     }
-    return 7; // 6 width + 1 spacing
+    // Guarantee inter-character spacing column is cleanly cleared
+    for (int8_t row = 0; row < 7; row++) {
+      setPixel(x + 5, y + row, bgColor);
+    }
+    return 6; // 5 width + 1 clean spacing
   }
 
   // 4. Standard 5x7 Font (ASCII 32 to 126 including all lowercase)
@@ -399,6 +419,10 @@ int8_t MatrixDriver::drawChar(int16_t x, int16_t y, char c, TextFont font, uint3
       }
     }
   }
+  // Guarantee inter-character spacing column is cleanly cleared
+  for (int8_t row = 0; row < 7; row++) {
+    setPixel(x + 5, y + row, bgColor);
+  }
   return 6; // 5 width + 1 spacing
 }
 
@@ -409,7 +433,7 @@ int16_t MatrixDriver::calculateTextWidth(const String& text, TextFont font) {
     if (font == FONT_MINI) {
       w += 4;
     } else if (font == FONT_BOLD) {
-      w += 7;
+      w += 6;
     } else if (font == FONT_DIGITAL) {
       if ((c >= '0' && c <= '9') || c == ':' || c == '-') w += 5;
       else w += 6;
