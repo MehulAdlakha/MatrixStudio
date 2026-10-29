@@ -238,6 +238,7 @@ static String pendingAnimName = "rainbow";
 static uint32_t pendingColor1 = 0x00F0FF;
 static uint32_t pendingColor2 = 0xFF007F;
 static uint8_t pendingBrightness = SAFE_BRIGHTNESS;
+static uint32_t pendingImagePixels[NUM_LEDS];
 
 // Active variables on Core 1
 static String currentMode = "text";
@@ -580,6 +581,15 @@ void applyPendingCommand() {
       rainSpeed[x] = 1 + (rand() % 2);
     }
   }
+  else if (currentMode == "image") {
+    strip.clear();
+    for (size_t i = 0; i < NUM_LEDS; i++) {
+      uint8_t x = i % MATRIX_WIDTH;
+      uint8_t y = i / MATRIX_WIDTH;
+      setPixel(x, y, pendingImagePixels[i]);
+    }
+    strip.show();
+  }
   else if (currentMode == "brightness") {
     strip.setBrightness(pendingBrightness);
     strip.show();
@@ -694,7 +704,7 @@ void networkWorker(void* param) {
       int code = http.GET();
       if (code == HTTP_CODE_OK) {
         String body = http.getString();
-        DynamicJsonDocument doc(16384);
+        DynamicJsonDocument doc(32768); // 32KB buffer to handle 300-pixel RGB arrays
         DeserializationError err = deserializeJson(doc, body);
 
         if (!err && doc["hasCommand"].as<bool>()) {
@@ -719,6 +729,21 @@ void networkWorker(void* param) {
               pendingSpeed = params["speed"].as<uint16_t>();
               if (pendingSpeed < 20) pendingSpeed = 40;
               pendingYOffset = params.containsKey("yOffset") ? params["yOffset"].as<int8_t>() : 1;
+            }
+            else if (type == "image") {
+              if (params.containsKey("pixels")) {
+                JsonArray pxArr = params["pixels"].as<JsonArray>();
+                size_t count = pxArr.size();
+                if (count > NUM_LEDS) count = NUM_LEDS;
+                for (size_t i = 0; i < count; i++) {
+                  JsonArray rgb = pxArr[i].as<JsonArray>();
+                  if (rgb.size() >= 3) {
+                    pendingImagePixels[i] = strip.Color(rgb[0].as<uint8_t>(), rgb[1].as<uint8_t>(), rgb[2].as<uint8_t>());
+                  } else {
+                    pendingImagePixels[i] = 0;
+                  }
+                }
+              }
             }
             else if (type == "animation") {
               pendingAnimName = params["name"].as<String>();

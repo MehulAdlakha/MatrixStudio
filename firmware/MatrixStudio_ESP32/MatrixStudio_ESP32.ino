@@ -49,6 +49,7 @@ struct CommandHandoff {
 };
 
 static CommandHandoff pendingCmd;
+static uint32_t pendingImagePixels[NUM_LEDS];
 static String lastExecutedCommandId = "";
 
 // Forward declarations
@@ -93,7 +94,7 @@ void networkWorkerTask(void* parameter) {
       int httpCode = http.GET();
       if (httpCode == HTTP_CODE_OK) {
         String payload = http.getString();
-        DynamicJsonDocument doc(16384);
+        DynamicJsonDocument doc(32768); // 32KB buffer for 300 RGB pixel arrays
         DeserializationError error = deserializeJson(doc, payload);
 
         if (!error && doc["hasCommand"].as<bool>()) {
@@ -119,6 +120,21 @@ void networkWorkerTask(void* parameter) {
               pendingCmd.speed = params["speed"].as<uint16_t>();
               if (pendingCmd.speed < 20) pendingCmd.speed = 40;
               pendingCmd.yOffset = params.containsKey("yOffset") ? params["yOffset"].as<int8_t>() : 1;
+            }
+            else if (type == "image") {
+              if (params.containsKey("pixels")) {
+                JsonArray pxArr = params["pixels"].as<JsonArray>();
+                size_t count = pxArr.size();
+                if (count > NUM_LEDS) count = NUM_LEDS;
+                for (size_t i = 0; i < count; i++) {
+                  JsonArray rgb = pxArr[i].as<JsonArray>();
+                  if (rgb.size() >= 3) {
+                    pendingImagePixels[i] = matrix.Color(rgb[0].as<uint8_t>(), rgb[1].as<uint8_t>(), rgb[2].as<uint8_t>());
+                  } else {
+                    pendingImagePixels[i] = 0;
+                  }
+                }
+              }
             }
             else if (type == "animation") {
               pendingCmd.animName = params["name"].as<String>();
@@ -287,7 +303,17 @@ void applyCommand() {
 
     matrix.configureText(pendingCmd.text, pendingCmd.color, pendingCmd.bgColor,
                          pendingCmd.speed, mode, pendingCmd.yOffset, font);
-    Serial.printf("  ✓ Active Text: '%s' [%s, %s]\n", pendingCmd.text.c_str(), pendingCmd.fontStr.c_str(), pendingCmd.modeStr.c_str());
+  } else if (type == "image") {
+    animations.stop();
+    matrix.setMode(MODE_IMAGE);
+    matrix.clear();
+    for (size_t i = 0; i < NUM_LEDS; i++) {
+      uint8_t x = i % MATRIX_WIDTH;
+      uint8_t y = i / MATRIX_WIDTH;
+      matrix.setPixel(x, y, pendingImagePixels[i]);
+    }
+    matrix.show();
+    Serial.println("  ✓ Active Image (30x10 custom frame) rendered.");
 
   } else if (type == "animation") {
     matrix.setMode(MODE_ANIMATION);
