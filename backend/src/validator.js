@@ -46,7 +46,7 @@ export function validateCommand(type, params) {
     return { valid: false, error: 'Command "type" is required and must be a string.' };
   }
 
-  const validTypes = ['text', 'image', 'animation', 'brightness', 'clear'];
+  const validTypes = ['text', 'image', 'animation', 'brightness', 'clear', 'mirror'];
   if (!validTypes.includes(type)) {
     return {
       valid: false,
@@ -67,6 +67,14 @@ export function validateCommand(type, params) {
       return validateAnimationParams(params);
     case 'brightness':
       return validateBrightnessParams(params);
+    case 'mirror':
+      return {
+        valid: true,
+        sanitized: {
+          mirrorX: Boolean(params.mirrorX),
+          mirrorY: Boolean(params.mirrorY)
+        }
+      };
     case 'clear':
       return { valid: true, sanitized: {} };
     default:
@@ -95,17 +103,21 @@ function validateTextParams(params) {
   const color = validateColor(params.color, [0, 255, 200]); // Cyber cyan default
   const bgColor = validateColor(params.bgColor, [0, 0, 0]);
 
+  const sanitized = {
+    text: params.text.trim(),
+    color,
+    bgColor,
+    speed,
+    mode,
+    font,
+    yOffset
+  };
+  if (params.mirrorX !== undefined) sanitized.mirrorX = Boolean(params.mirrorX);
+  if (params.mirrorY !== undefined) sanitized.mirrorY = Boolean(params.mirrorY);
+
   return {
     valid: true,
-    sanitized: {
-      text: params.text.trim(),
-      color,
-      bgColor,
-      speed,
-      mode,
-      font,
-      yOffset
-    }
+    sanitized
   };
 }
 
@@ -130,13 +142,17 @@ function validateImageParams(params) {
     sanitizedPixels.push(validateColor(px, [0, 0, 0]));
   }
 
+  const sanitized = {
+    width: MATRIX_WIDTH,
+    height: MATRIX_HEIGHT,
+    pixels: sanitizedPixels
+  };
+  if (params.mirrorX !== undefined) sanitized.mirrorX = Boolean(params.mirrorX);
+  if (params.mirrorY !== undefined) sanitized.mirrorY = Boolean(params.mirrorY);
+
   return {
     valid: true,
-    sanitized: {
-      width: MATRIX_WIDTH,
-      height: MATRIX_HEIGHT,
-      pixels: sanitizedPixels
-    }
+    sanitized
   };
 }
 
@@ -163,15 +179,19 @@ function validateAnimationParams(params) {
   const primaryColor = validateColor(params.primaryColor, [0, 255, 230]);
   const secondaryColor = validateColor(params.secondaryColor, [255, 0, 128]);
 
+  const sanitized = {
+    name: params.name,
+    speed,
+    intensity,
+    primaryColor,
+    secondaryColor
+  };
+  if (params.mirrorX !== undefined) sanitized.mirrorX = Boolean(params.mirrorX);
+  if (params.mirrorY !== undefined) sanitized.mirrorY = Boolean(params.mirrorY);
+
   return {
     valid: true,
-    sanitized: {
-      name: params.name,
-      speed,
-      intensity,
-      primaryColor,
-      secondaryColor
-    }
+    sanitized
   };
 }
 

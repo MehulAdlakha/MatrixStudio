@@ -200,7 +200,9 @@ MatrixDriver::MatrixDriver()
     scrollDirection(1),
     blinkState(true),
     lastTextStepTime(0),
-    lastBlinkTime(0) {}
+    lastBlinkTime(0),
+    mirrorX(DEFAULT_MIRROR_X),
+    mirrorY(DEFAULT_MIRROR_Y) {}
 
 void MatrixDriver::begin() {
   strip.begin();
@@ -226,11 +228,16 @@ void MatrixDriver::setBrightness(uint8_t brightness) {
 
 /**
  * Bounds-safe Serpentine Coordinate to Physical LED Index Mapping
+ * Automatically handles Universal Mirroring (Flip X and Flip Y) for all modes!
  */
 int32_t MatrixDriver::XY(int16_t x, int16_t y) {
   if (x < 0 || x >= MATRIX_WIDTH || y < 0 || y >= MATRIX_HEIGHT) {
     return -1; // Out of bounds
   }
+
+  // Universal mirror transformation (applies to text, image, animations)
+  if (mirrorX) x = (MATRIX_WIDTH - 1) - x;
+  if (mirrorY) y = (MATRIX_HEIGHT - 1) - y;
 
 #if MATRIX_HORIZONTAL
   if (SERPENTINE_LAYOUT) {

@@ -46,6 +46,10 @@ struct CommandHandoff {
   uint32_t animColor2;
   // Brightness / Image parameters
   uint8_t brightness;
+  // Universal Mirror parameters
+  bool hasMirrorUpdate;
+  bool mirrorX;
+  bool mirrorY;
 };
 
 static CommandHandoff pendingCmd;
@@ -150,6 +154,20 @@ void networkWorkerTask(void* parameter) {
               else if (params.containsKey("brightness")) b = params["brightness"].as<uint8_t>();
               if (b > 180) b = 180;
               pendingCmd.brightness = b;
+            }
+            else if (type == "mirror") {
+              if (params.containsKey("mirrorX")) pendingCmd.mirrorX = params["mirrorX"].as<bool>();
+              if (params.containsKey("mirrorY")) pendingCmd.mirrorY = params["mirrorY"].as<bool>();
+              pendingCmd.hasMirrorUpdate = true;
+            }
+
+            if (params.containsKey("mirrorX")) {
+              pendingCmd.mirrorX = params["mirrorX"].as<bool>();
+              pendingCmd.hasMirrorUpdate = true;
+            }
+            if (params.containsKey("mirrorY")) {
+              pendingCmd.mirrorY = params["mirrorY"].as<bool>();
+              pendingCmd.hasMirrorUpdate = true;
             }
 
             // Flag Core 1 to apply new effect immediately
@@ -285,7 +303,26 @@ void loop() {
 // Command Execution on Core 1
 // =========================================================================
 void applyCommand() {
+  if (pendingCmd.hasMirrorUpdate) {
+    matrix.setMirror(pendingCmd.mirrorX, pendingCmd.mirrorY);
+    pendingCmd.hasMirrorUpdate = false;
+    Serial.printf("  🪞 Universal Mirror: X=%s, Y=%s\n", pendingCmd.mirrorX ? "ON" : "OFF", pendingCmd.mirrorY ? "ON" : "OFF");
+
+    if (matrix.getCurrentMode() == MODE_IMAGE) {
+      matrix.clear();
+      for (size_t i = 0; i < NUM_LEDS; i++) {
+        uint8_t x = i % MATRIX_WIDTH;
+        uint8_t y = i / MATRIX_WIDTH;
+        matrix.setPixel(x, y, pendingImagePixels[i]);
+      }
+      matrix.show();
+    }
+  }
+
   String type = pendingCmd.type;
+  if (type == "mirror") {
+    return;
+  }
 
   if (type == "text") {
     animations.stop();

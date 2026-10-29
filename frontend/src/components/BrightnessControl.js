@@ -14,6 +14,9 @@ const PRESETS = [
 export default function BrightnessControl({ onToast }) {
   const [brightness, setBrightness] = useState(128);
   const [isUpdating, setIsUpdating] = useState(false);
+  const [mirrorX, setMirrorX] = useState(false);
+  const [mirrorY, setMirrorY] = useState(false);
+  const [isUpdatingMirror, setIsUpdatingMirror] = useState(false);
 
   const applyBrightness = async (val) => {
     setIsUpdating(true);
@@ -30,6 +33,29 @@ export default function BrightnessControl({ onToast }) {
       });
     } finally {
       setIsUpdating(false);
+    }
+  };
+
+  const toggleMirror = async (axis) => {
+    const newX = axis === 'X' ? !mirrorX : mirrorX;
+    const newY = axis === 'Y' ? !mirrorY : mirrorY;
+    if (axis === 'X') setMirrorX(newX);
+    if (axis === 'Y') setMirrorY(newY);
+
+    setIsUpdatingMirror(true);
+    try {
+      await sendCommand('mirror', { mirrorX: newX, mirrorY: newY });
+      onToast({
+        type: 'success',
+        message: `Mirror set: Horizontal=${newX ? 'ON (Flipped)' : 'OFF'}, Vertical=${newY ? 'ON (Flipped)' : 'OFF'}`
+      });
+    } catch (err) {
+      onToast({
+        type: 'error',
+        message: err.message || 'Failed to update mirror settings'
+      });
+    } finally {
+      setIsUpdatingMirror(false);
     }
   };
 
@@ -102,6 +128,61 @@ export default function BrightnessControl({ onToast }) {
         >
           {isUpdating ? 'Applying...' : 'Apply Brightness'}
         </button>
+      </div>
+
+      {/* Universal Mirror & Flip Section */}
+      <div style={{ marginTop: '16px', paddingTop: '14px', borderTop: '1px solid rgba(255, 255, 255, 0.08)' }}>
+        <div className="form-label" style={{ marginBottom: '10px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span style={{ fontSize: '1.05rem' }}>🪞</span>
+            <span style={{ fontWeight: 700, color: '#fff', fontSize: '0.92rem' }}>Universal Mirror & Flip</span>
+          </div>
+          <span className="form-label-value" style={{ fontSize: '0.75rem', opacity: 0.8 }}>
+            Applies to text, image & anims
+          </span>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+          <button
+            type="button"
+            className={`tool-btn ${mirrorX ? 'active' : ''}`}
+            style={{
+              padding: '8px 12px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '6px',
+              border: mirrorX ? '1px solid #00f0ff' : '1px solid rgba(255,255,255,0.1)',
+              background: mirrorX ? 'rgba(0, 240, 255, 0.18)' : 'rgba(255,255,255,0.03)'
+            }}
+            onClick={() => toggleMirror('X')}
+            disabled={isUpdatingMirror}
+            title="Mirror horizontally (flip left and right)"
+          >
+            <span>↔ Flip X</span>
+            <span style={{ fontWeight: 700, color: mirrorX ? '#00f0ff' : '#888' }}>{mirrorX ? 'ON' : 'OFF'}</span>
+          </button>
+
+          <button
+            type="button"
+            className={`tool-btn ${mirrorY ? 'active' : ''}`}
+            style={{
+              padding: '8px 12px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '6px',
+              border: mirrorY ? '1px solid #ff007f' : '1px solid rgba(255,255,255,0.1)',
+              background: mirrorY ? 'rgba(255, 0, 127, 0.18)' : 'rgba(255,255,255,0.03)'
+            }}
+            onClick={() => toggleMirror('Y')}
+            disabled={isUpdatingMirror}
+            title="Flip vertically (upside down)"
+          >
+            <span>↕ Flip Y</span>
+            <span style={{ fontWeight: 700, color: mirrorY ? '#ff007f' : '#888' }}>{mirrorY ? 'ON' : 'OFF'}</span>
+          </button>
+        </div>
       </div>
     </div>
   );

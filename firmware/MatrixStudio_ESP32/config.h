@@ -39,6 +39,8 @@
 #define SERPENTINE_LAYOUT   true    // true = zigzag wiring; false = straight row-by-row
 #define MATRIX_HORIZONTAL   true    // true = rows wired horizontally; false = column-wise
 #define FIRST_LED_TOP_LEFT  true    // true = pixel 0 is at (0,0) Top-Left
+#define DEFAULT_MIRROR_X    false   // true = Flip horizontally (Left <-> Right)
+#define DEFAULT_MIRROR_Y    false   // true = Flip vertically (Top <-> Bottom)
 
 // Default LED Brightness (0 - 255)
 #define DEFAULT_BRIGHTNESS  100

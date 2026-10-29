@@ -239,6 +239,13 @@ static uint32_t pendingColor1 = 0x00F0FF;
 static uint32_t pendingColor2 = 0xFF007F;
 static uint8_t pendingBrightness = SAFE_BRIGHTNESS;
 static uint32_t pendingImagePixels[NUM_LEDS];
+static bool pendingMirrorX = false;
+static bool pendingMirrorY = false;
+static bool pendingHasMirrorUpdate = false;
+
+// Universal Mirror Flags on Core 1
+static bool mirrorX = false;
+static bool mirrorY = false;
 
 // Active variables on Core 1
 static String currentMode = "text";
@@ -270,10 +277,15 @@ static uint32_t lastAnimTick = 0;
 static String lastExecutedId = "";
 
 // -------------------------------------------------------------------------
-// Coordinate Mapping (Serpentine)
+// Coordinate Mapping (Serpentine + Universal Mirroring)
 // -------------------------------------------------------------------------
 inline int32_t xyToIndex(int16_t x, int16_t y) {
   if (x < 0 || x >= MATRIX_WIDTH || y < 0 || y >= MATRIX_HEIGHT) return -1;
+
+  // Universal Hardware Mirroring (applies to text, pixel art, animations)
+  if (mirrorX) x = (MATRIX_WIDTH - 1) - x;
+  if (mirrorY) y = (MATRIX_HEIGHT - 1) - y;
+
   if (SERPENTINE_LAYOUT) {
     if (y % 2 == 0) return (y * MATRIX_WIDTH) + x;
     else return (y * MATRIX_WIDTH) + (MATRIX_WIDTH - 1 - x);
@@ -531,6 +543,31 @@ void renderRainbow() {
 // Core 1: Execute Active Effect at Full 60 FPS
 // -------------------------------------------------------------------------
 void applyPendingCommand() {
+  if (pendingHasMirrorUpdate) {
+    mirrorX = pendingMirrorX;
+    mirrorY = pendingMirrorY;
+    pendingHasMirrorUpdate = false;
+    Serial.printf("  🪞 Universal Mirror: X=%s, Y=%s\n", mirrorX ? "ON" : "OFF", mirrorY ? "ON" : "OFF");
+
+    if (currentMode == "image") {
+      strip.clear();
+      for (size_t i = 0; i < NUM_LEDS; i++) {
+        uint8_t x = i % MATRIX_WIDTH;
+        uint8_t y = i / MATRIX_WIDTH;
+        setPixel(x, y, pendingImagePixels[i]);
+      }
+      strip.show();
+    } else if (currentMode == "text" && (currentScrollMode == "static" || currentScrollMode == "blink")) {
+      strip.clear();
+      renderString(scrollX, textYOffset, currentText, currentFont, textColor, textBgColor);
+      strip.show();
+    }
+  }
+
+  if (pendingType == "mirror") {
+    return;
+  }
+
   currentMode = pendingType;
   strip.clear();
   strip.show();
@@ -758,6 +795,20 @@ void networkWorker(void* param) {
               else if (params.containsKey("brightness")) b = params["brightness"].as<uint8_t>();
               if (b > 180) b = 180;
               pendingBrightness = b;
+            }
+            else if (type == "mirror") {
+              if (params.containsKey("mirrorX")) pendingMirrorX = params["mirrorX"].as<bool>();
+              if (params.containsKey("mirrorY")) pendingMirrorY = params["mirrorY"].as<bool>();
+              pendingHasMirrorUpdate = true;
+            }
+
+            if (params.containsKey("mirrorX")) {
+              pendingMirrorX = params["mirrorX"].as<bool>();
+              pendingHasMirrorUpdate = true;
+            }
+            if (params.containsKey("mirrorY")) {
+              pendingMirrorY = params["mirrorY"].as<bool>();
+              pendingHasMirrorUpdate = true;
             }
 
             hasNewCommand = true;

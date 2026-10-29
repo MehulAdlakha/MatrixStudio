@@ -62,10 +62,17 @@ public:
   void setMode(DisplayMode mode) { currentMode = mode; }
   String getModeString() const;
 
+  // Mirror & Flip
+  void setMirror(bool mX, bool mY) { mirrorX = mX; mirrorY = mY; }
+  bool getMirrorX() const { return mirrorX; }
+  bool getMirrorY() const { return mirrorY; }
+
 private:
   Adafruit_NeoPixel strip;
   uint8_t currentBrightness;
   DisplayMode currentMode;
+  bool mirrorX;
+  bool mirrorY;
 
   // Text scrolling state
   String currentText;

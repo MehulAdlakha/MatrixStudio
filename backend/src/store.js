@@ -63,6 +63,8 @@ class MatrixStore {
         return `Animation: ${params.name} (Speed: ${params.speed}ms)`;
       case 'brightness':
         return `Brightness: ${params.value}/255 (${Math.round((params.value / 255) * 100)}%)`;
+      case 'mirror':
+        return `Mirror: X=${params.mirrorX ? 'ON' : 'OFF'}, Y=${params.mirrorY ? 'ON' : 'OFF'}`;
       case 'clear':
         return 'Clear Display';
       default:
