@@ -803,9 +803,9 @@ void networkWorker(void* param) {
           continue;
         }
 
-        // SLOW PATH: New command arrived! Allocate 32KB only for image pixel arrays, else 2KB
+        // SLOW PATH: New command arrived! Allocate 6KB only for image pixel arrays, else 2KB
         bool isImage = (body.indexOf("\"image\"") != -1);
-        DynamicJsonDocument doc(isImage ? 32768 : 2048);
+        DynamicJsonDocument doc(isImage ? 6144 : 2048);
         DeserializationError err = deserializeJson(doc, body);
 
         if (!err && doc["hasCommand"].as<bool>()) {
@@ -877,6 +877,20 @@ void networkWorker(void* param) {
             hasNewCommand = true;
             lastExecutedId = cmdId;
           }
+        } else {
+          // If JSON parse failed, extract cmdId directly to auto-ack and avoid infinite loop freeze
+          int idIdx = body.indexOf("\"id\":\"");
+          if (idIdx != -1) {
+            int endIdx = body.indexOf("\"", idIdx + 6);
+            if (endIdx != -1) {
+              lastExecutedId = body.substring(idIdx + 6, endIdx);
+            }
+          }
+        }
+      } else {
+        // Request failed or timed out: abort stale SSL connection to prevent socket hang
+        if (code <= 0 && isHttps) {
+          secClient.stop();
         }
       }
       http.end();
@@ -967,5 +981,5 @@ void loop() {
 
   // Run the active effect in endless loop
   updateActiveLoop();
-  yield();
+  delay(5); // Crucial: Yields to FreeRTOS IDLE1 task to feed the ESP32 Task Watchdog Timer
 }

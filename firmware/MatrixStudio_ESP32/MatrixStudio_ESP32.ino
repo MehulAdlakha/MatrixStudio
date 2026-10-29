@@ -115,9 +115,9 @@ void networkWorkerTask(void* parameter) {
           continue;
         }
 
-        // SLOW PATH: New command arrived! Allocate 32KB only for image pixel arrays, else 2KB
+        // SLOW PATH: New command arrived! Allocate 6KB only for image pixel arrays, else 2KB
         bool isImage = (payload.indexOf("\"image\"") != -1);
-        DynamicJsonDocument doc(isImage ? 32768 : 2048);
+        DynamicJsonDocument doc(isImage ? 6144 : 2048);
         DeserializationError error = deserializeJson(doc, payload);
 
         if (!error && doc["hasCommand"].as<bool>()) {
@@ -193,6 +193,20 @@ void networkWorkerTask(void* parameter) {
             pendingCmd.hasNew = true;
             lastExecutedCommandId = cmdId;
           }
+        } else {
+          // If JSON parse failed, extract cmdId directly to auto-ack and avoid infinite loop freeze
+          int idIdx = payload.indexOf("\"id\":\"");
+          if (idIdx != -1) {
+            int endIdx = payload.indexOf("\"", idIdx + 6);
+            if (endIdx != -1) {
+              lastExecutedCommandId = payload.substring(idIdx + 6, endIdx);
+            }
+          }
+        }
+      } else {
+        // Request failed or timed out: abort stale SSL connection to prevent socket hang
+        if (code <= 0 && isHttps) {
+          secClient.stop();
         }
       }
       http.end();
@@ -286,8 +300,8 @@ void loop() {
     animations.update(now);
   }
 
-  // Micro delay to yield Core 1
-  yield();
+  // Micro delay to yield Core 1 and feed FreeRTOS watchdog
+  delay(5);
 }
 
 // =========================================================================
