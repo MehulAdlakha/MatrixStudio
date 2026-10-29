@@ -12,6 +12,7 @@
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 #include <Adafruit_NeoPixel.h>
+#include <Preferences.h>
 
 // =========================================================================
 // Wi-Fi & Backend Configuration
@@ -36,6 +37,7 @@ const char* ENDPOINT_STATUS  = "https://matrixstudio.onrender.com/api/device/sta
 #define SAFE_BRIGHTNESS   100
 
 Adafruit_NeoPixel strip(NUM_LEDS, LED_PIN, NEO_GRB + NEO_KHZ800);
+Preferences prefs; // Onboard Non-Volatile Storage (NVS) engine
 
 // =========================================================================
 // Font 1: Standard 5x7 ASCII (Complete 32 to 126 including all lowercase)
@@ -573,6 +575,96 @@ void renderRainbow() {
 }
 
 // -------------------------------------------------------------------------
+// Persistent Storage: Onboard Flash Memory (NVS)
+// Saves active effect so it survives power cuts, restarts, and Wi-Fi drops
+// -------------------------------------------------------------------------
+void saveStateToNVS() {
+  prefs.begin("matrix", false);
+  prefs.putString("type", currentMode);
+  prefs.putBool("mirrorX", mirrorX);
+  prefs.putBool("mirrorY", mirrorY);
+
+  if (currentMode == "text") {
+    prefs.putString("text", currentText);
+    prefs.putString("font", currentFont);
+    prefs.putString("mode", currentScrollMode);
+    prefs.putUInt("color", textColor);
+    prefs.putUInt("bgColor", textBgColor);
+    prefs.putUShort("speed", textSpeed);
+    prefs.putChar("yOffset", textYOffset);
+  } else if (currentMode == "animation") {
+    prefs.putString("animName", currentAnimation);
+    prefs.putUShort("animSpd", animSpeed);
+    prefs.putUInt("animC1", animColor1);
+    prefs.putUInt("animC2", animColor2);
+  } else if (currentMode == "image") {
+    prefs.putBytes("pixels", pendingImagePixels, sizeof(pendingImagePixels));
+  } else if (currentMode == "brightness") {
+    prefs.putUChar("bright", pendingBrightness);
+  }
+  prefs.end();
+  Serial.printf("  💾 Saved active effect [%s] to onboard Flash (survives power cuts & disconnects)\n", currentMode.c_str());
+}
+
+void loadStateFromNVS() {
+  prefs.begin("matrix", true); // Read-only
+  String savedType = prefs.getString("type", "text");
+  mirrorX = prefs.getBool("mirrorX", false);
+  mirrorY = prefs.getBool("mirrorY", false);
+
+  uint8_t savedBright = prefs.getUChar("bright", SAFE_BRIGHTNESS);
+  if (savedBright > 0 && savedBright <= 180) {
+    strip.setBrightness(savedBright);
+  }
+
+  if (savedType == "text") {
+    pendingType = "text";
+    pendingText = prefs.getString("text", "MATRIX STUDIO");
+    pendingFont = prefs.getString("font", "standard");
+    pendingMode = prefs.getString("mode", "scroll_left");
+    pendingColor = prefs.getUInt("color", 0x00F0FF);
+    pendingBgColor = prefs.getUInt("bgColor", 0x000000);
+    pendingSpeed = prefs.getUShort("speed", 50);
+    pendingYOffset = prefs.getChar("yOffset", 1);
+  } else if (savedType == "animation") {
+    pendingType = "animation";
+    pendingAnimName = prefs.getString("animName", "rainbow");
+    pendingSpeed = prefs.getUShort("animSpd", 40);
+    pendingColor1 = prefs.getUInt("animC1", 0x00F0FF);
+    pendingColor2 = prefs.getUInt("animC2", 0xFF007F);
+  } else if (savedType == "image") {
+    pendingType = "image";
+    size_t len = prefs.getBytes("pixels", pendingImagePixels, sizeof(pendingImagePixels));
+    if (len == 0) {
+      pendingType = "text";
+      pendingText = "MATRIX STUDIO";
+      pendingFont = "standard";
+      pendingMode = "scroll_left";
+      pendingColor = 0x00F0FF;
+      pendingSpeed = 50;
+      pendingYOffset = 1;
+    }
+  } else if (savedType == "brightness") {
+    pendingType = "brightness";
+    pendingBrightness = savedBright;
+  } else if (savedType == "clear") {
+    pendingType = "clear";
+  } else {
+    pendingType = "text";
+    pendingText = "MATRIX STUDIO";
+    pendingFont = "standard";
+    pendingMode = "scroll_left";
+    pendingColor = 0x00F0FF;
+    pendingSpeed = 50;
+    pendingYOffset = 1;
+  }
+
+  prefs.end();
+  hasNewCommand = true;
+  Serial.printf("  📂 Loaded saved state from onboard Flash: %s\n", pendingType.c_str());
+}
+
+// -------------------------------------------------------------------------
 // Core 1: Execute Active Effect at Full 60 FPS
 // -------------------------------------------------------------------------
 void applyPendingCommand() {
@@ -581,6 +673,7 @@ void applyPendingCommand() {
     mirrorY = pendingMirrorY;
     pendingHasMirrorUpdate = false;
     Serial.printf("  🪞 Universal Mirror: X=%s, Y=%s\n", mirrorX ? "ON" : "OFF", mirrorY ? "ON" : "OFF");
+    saveStateToNVS();
 
     if (currentMode == "image") {
       strip.clear();
@@ -668,6 +761,9 @@ void applyPendingCommand() {
     strip.clear();
     showStrip();
   }
+
+  // Persist updated mode and settings into onboard Flash memory
+  saveStateToNVS();
 }
 
 void updateActiveLoop() {
@@ -927,6 +1023,10 @@ void setup() {
   }
   showStrip();
 
+  // Load last saved effect from onboard Flash (starts immediately before Wi-Fi!)
+  loadStateFromNVS();
+  applyPendingCommand();
+
   WiFi.mode(WIFI_STA);
   WiFi.softAPdisconnect(true);
   WiFi.setAutoReconnect(true);
@@ -958,15 +1058,6 @@ void setup() {
     NULL,
     0 // Core 0
   );
-
-  // Default active effect: Matrix Studio in Digital Clock font!
-  pendingType = "text";
-  pendingText = "MATRIX STUDIO";
-  pendingFont = "standard";
-  pendingMode = "scroll_left";
-  pendingColor = 0x00F0FF;
-  pendingSpeed = 50;
-  hasNewCommand = true;
 }
 
 // =========================================================================
