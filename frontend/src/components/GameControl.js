@@ -43,6 +43,10 @@ class SoundFX {
     } catch (e) {}
   }
 
+  step() {
+    this.playTone(440, 0.03, 'sine');
+  }
+
   score() {
     this.playTone(587, 0.06, 'square');
     setTimeout(() => this.playTone(880, 0.1, 'square'), 60);
@@ -69,7 +73,7 @@ const sfx = new SoundFX();
 // Game Metadata
 // =========================================================================
 const GAMES = [
-  { id: 'snake', name: 'Cyber Snake', icon: '🐍', tag: '30×10 Calibrated' },
+  { id: 'snake', name: 'Cyber Snake', icon: '🐍', tag: '1-Pixel Joystick Step' },
   { id: 'pong', name: 'Cyber Pong', icon: '🏓', tag: 'Solo Wall Bounce' },
   { id: 'defender', name: 'Galaxy Defender', icon: '🚀', tag: 'Space Shooter' },
   { id: 'breaker', name: 'Brick Breaker', icon: '🧱', tag: 'Retro Breakout' }
@@ -81,6 +85,7 @@ function GameControl({ onFrameUpdate, onToast }) {
   const [score, setScore] = useState(0);
   const [highScore, setHighScore] = useState(0);
   const [lives, setLives] = useState(3);
+  const [snakeControlMode, setSnakeControlMode] = useState('step'); // 'step' (1-Pixel per Tap) | 'auto' (Continuous Auto-Run)
   const [speedLevel, setSpeedLevel] = useState('normal'); // 'slow' | 'normal' | 'fast'
   const [wallMode, setWallMode] = useState('wrap'); // 'wrap' (Arcade 30x10) | 'solid' (Hardcore)
   const [soundEnabled, setSoundEnabled] = useState(true);
@@ -89,32 +94,31 @@ function GameControl({ onFrameUpdate, onToast }) {
 
   // References
   const gameLoopRef = useRef(null);
+  const autoRepeatTimerRef = useRef(null);
+  const autoRepeatIntervalRef = useRef(null);
   const isTransmittingRef = useRef(false);
-  const lastTransmitTimeRef = useRef(0);
-  const networkBackoffUntilRef = useRef(0);
   const pendingFrameRef = useRef(null);
 
   // Mutable Game Engine State
   const stateRef = useRef({
-    // Snake (Calibrated for 30x10)
+    // Snake State
     snake: [{ x: 10, y: 5 }, { x: 9, y: 5 }, { x: 8, y: 5 }],
     snakeDir: 'RIGHT',
-    snakeInputQueue: [],
     snakeFood: { x: 22, y: 5 },
     snakeEatFlash: null,
 
-    // Pong
+    // Pong State
     pongPaddleY: 3,
     pongPaddleH: 3,
     pongBall: { x: 15, y: 5, vx: 1, vy: 1 },
 
-    // Defender
+    // Defender State
     defPlayerY: 4,
     defBullets: [],
     defEnemies: [],
     defTickCounter: 0,
 
-    // Breaker
+    // Breaker State
     breakPaddleX: 13,
     breakPaddleW: 5,
     breakBall: { x: 15, y: 8, vx: 1, vy: -1 },
@@ -149,61 +153,33 @@ function GameControl({ onFrameUpdate, onToast }) {
   };
 
   // =========================================================================
-  // Non-Blocking Decoupled Hardware Matrix Transmitter
+  // Non-Blocking Immediate Hardware Matrix Transmitter
   // =========================================================================
   const pushFrameToHardware = useCallback((pixels) => {
     if (!syncToMatrix) return;
     pendingFrameRef.current = pixels;
 
-    const now = Date.now();
-    if (now < networkBackoffUntilRef.current) return;
-    if (now - lastTransmitTimeRef.current < 200) return;
     if (isTransmittingRef.current) return;
 
-    lastTransmitTimeRef.current = now;
     isTransmittingRef.current = true;
-
     const frameData = pendingFrameRef.current;
-    sendCommand('image', { pixels: frameData }, { timeoutMs: 1500 })
+    pendingFrameRef.current = null;
+
+    sendCommand('image', { pixels: frameData }, { timeoutMs: 1200 })
       .then(() => {
         setMatrixStatus('Synced 🟢');
       })
       .catch(() => {
-        networkBackoffUntilRef.current = Date.now() + 2000;
-        setMatrixStatus('Offline / Paused ⚪');
+        setMatrixStatus('Offline ⚪');
       })
       .finally(() => {
         isTransmittingRef.current = false;
+        // If a new frame was requested while in-flight, send the latest frame immediately
+        if (pendingFrameRef.current) {
+          pushFrameToHardware(pendingFrameRef.current);
+        }
       });
   }, [syncToMatrix]);
-
-  // =========================================================================
-  // Speed Calibrations for 30x10 Matrix
-  // =========================================================================
-  const getSpeedMs = () => {
-    if (activeGame === 'snake') {
-      // 30x10 Matrix requires tuned speeds: 10 rows is narrow
-      if (speedLevel === 'slow') return 210;   // Matrix Relaxed
-      if (speedLevel === 'fast') return 110;   // Matrix Turbo
-      return 155;                             // Matrix Standard (Default)
-    }
-    if (activeGame === 'pong') {
-      if (speedLevel === 'slow') return 120;
-      if (speedLevel === 'fast') return 65;
-      return 90;
-    }
-    if (activeGame === 'defender') {
-      if (speedLevel === 'slow') return 110;
-      if (speedLevel === 'fast') return 55;
-      return 75;
-    }
-    if (activeGame === 'breaker') {
-      if (speedLevel === 'slow') return 110;
-      if (speedLevel === 'fast') return 65;
-      return 85;
-    }
-    return 140;
-  };
 
   // Safe Food Spawning on 30x10 Grid (at least 4 units from head)
   const spawnFood = (snake) => {
@@ -224,46 +200,8 @@ function GameControl({ onFrameUpdate, onToast }) {
     return { x: (head.x + 8) % MATRIX_WIDTH, y: (head.y + 4) % MATRIX_HEIGHT };
   };
 
-  const initGame = useCallback((gameId = activeGame) => {
-    const s = stateRef.current;
-    setScore(0);
-
-    if (gameId === 'snake') {
-      // Start in center-left moving horizontally towards right (30 cols gives plenty of space)
-      s.snake = [{ x: 10, y: 5 }, { x: 9, y: 5 }, { x: 8, y: 5 }];
-      s.snakeDir = 'RIGHT';
-      s.snakeInputQueue = [];
-      s.snakeFood = spawnFood(s.snake);
-      s.snakeEatFlash = null;
-    } else if (gameId === 'pong') {
-      setLives(3);
-      s.pongPaddleY = 3;
-      s.pongBall = { x: 15, y: 5, vx: Math.random() > 0.5 ? 1 : -1, vy: Math.random() > 0.5 ? 1 : -1 };
-    } else if (gameId === 'defender') {
-      setLives(3);
-      s.defPlayerY = 4;
-      s.defBullets = [];
-      s.defEnemies = [];
-      s.defTickCounter = 0;
-    } else if (gameId === 'breaker') {
-      setLives(3);
-      s.breakPaddleX = 12;
-      s.breakBall = { x: 15, y: 7, vx: 1, vy: -1 };
-      const bricks = [];
-      for (let y = 0; y < 2; y++) {
-        for (let x = 0; x < MATRIX_WIDTH; x++) {
-          bricks.push({ x, y, active: true, color: y === 0 ? [255, 0, 128] : [0, 240, 255] });
-        }
-      }
-      s.breakBricks = bricks;
-    }
-
-    renderCurrentGame(gameId);
-  }, [activeGame]);
-
   // =========================================================================
   // 30x10 LED Matrix Game Renderers
-  // Calibrated colors for physical WS2812B LEDs (high contrast)
   // =========================================================================
   const renderCurrentGame = useCallback((gameId = activeGame) => {
     const s = stateRef.current;
@@ -277,20 +215,20 @@ function GameControl({ onFrameUpdate, onToast }) {
     };
 
     if (gameId === 'snake') {
-      // 1. Food: Blinking Pulsing Neon Cherry Red for physical matrix visibility
+      // 1. Food: Pulsing Neon Cherry Red
       const foodBlink = Math.floor(Date.now() / 250) % 2 === 0;
-      setPixel(s.snakeFood.x, s.snakeFood.y, foodBlink ? [255, 0, 75] : [140, 0, 35]);
+      setPixel(s.snakeFood.x, s.snakeFood.y, foodBlink ? [255, 0, 75] : [160, 0, 45]);
 
-      // 2. Snake Body: Gradient emerald neon green (tail tip is darker green)
+      // 2. Snake Body: Gradient Emerald Neon Green
       for (let i = 1; i < s.snake.length; i++) {
         const seg = s.snake[i];
         const ratio = 1 - i / Math.max(s.snake.length, 1);
-        const g = Math.round(150 + 105 * ratio); // 150 to 255
-        const b = Math.round(20 + 50 * ratio);   // 20 to 70
+        const g = Math.round(150 + 105 * ratio);
+        const b = Math.round(20 + 50 * ratio);
         setPixel(seg.x, seg.y, [0, g, b]);
       }
 
-      // 3. Snake Head: Pure High-Contrast White / Cyan (unmistakable on 30x10 board)
+      // 3. Snake Head: Pure High-Contrast White
       if (s.snake.length > 0) {
         setPixel(s.snake[0].x, s.snake[0].y, [255, 255, 255]);
       }
@@ -324,39 +262,110 @@ function GameControl({ onFrameUpdate, onToast }) {
       setPixel(Math.round(s.breakBall.x), Math.round(s.breakBall.y), [255, 240, 0]);
     }
 
-    // Immediately update Live Canvas Simulator
+    // Immediately push to Live Canvas Simulator (0ms delay)
     if (onFrameUpdate) onFrameUpdate(grid);
 
     // Stream to Hardware Matrix
     pushFrameToHardware(grid);
   }, [activeGame, onFrameUpdate, pushFrameToHardware]);
 
-  // =========================================================================
-  // Game Step: Cyber Snake (Matrix-Optimized)
-  // =========================================================================
-  const tickSnake = () => {
+  const initGame = useCallback((gameId = activeGame) => {
     const s = stateRef.current;
+    setScore(0);
 
-    // Pop next queued direction
-    if (s.snakeInputQueue.length > 0) {
-      s.snakeDir = s.snakeInputQueue.shift();
+    if (gameId === 'snake') {
+      s.snake = [{ x: 10, y: 5 }, { x: 9, y: 5 }, { x: 8, y: 5 }];
+      s.snakeDir = 'RIGHT';
+      s.snakeFood = spawnFood(s.snake);
+      s.snakeEatFlash = null;
+    } else if (gameId === 'pong') {
+      setLives(3);
+      s.pongPaddleY = 3;
+      s.pongBall = { x: 15, y: 5, vx: Math.random() > 0.5 ? 1 : -1, vy: Math.random() > 0.5 ? 1 : -1 };
+    } else if (gameId === 'defender') {
+      setLives(3);
+      s.defPlayerY = 4;
+      s.defBullets = [];
+      s.defEnemies = [];
+      s.defTickCounter = 0;
+    } else if (gameId === 'breaker') {
+      setLives(3);
+      s.breakPaddleX = 12;
+      s.breakBall = { x: 15, y: 7, vx: 1, vy: -1 };
+      const bricks = [];
+      for (let y = 0; y < 2; y++) {
+        for (let x = 0; x < MATRIX_WIDTH; x++) {
+          bricks.push({ x, y, active: true, color: y === 0 ? [255, 0, 128] : [0, 240, 255] });
+        }
+      }
+      s.breakBricks = bricks;
     }
 
+    renderCurrentGame(gameId);
+  }, [activeGame, renderCurrentGame]);
+
+  const handleGameOver = () => {
+    setGameState('gameover');
+    sfx.gameOver();
+    if (gameLoopRef.current) clearInterval(gameLoopRef.current);
+    if (autoRepeatTimerRef.current) clearTimeout(autoRepeatTimerRef.current);
+    if (autoRepeatIntervalRef.current) clearInterval(autoRepeatIntervalRef.current);
+
+    // Flash snake red on crash
+    const s = stateRef.current;
+    const deathGrid = createEmptyGrid();
+    if (activeGame === 'snake') {
+      s.snake.forEach((seg) => {
+        const idx = seg.y * MATRIX_WIDTH + seg.x;
+        if (idx >= 0 && idx < TOTAL_LEDS) deathGrid[idx] = [255, 0, 0];
+      });
+      if (onFrameUpdate) onFrameUpdate(deathGrid);
+      pushFrameToHardware(deathGrid);
+    }
+
+    if (onToast) {
+      onToast({ type: 'warning', message: `Snake Game Over! Final Score: ${score}` });
+    }
+  };
+
+  // =========================================================================
+  // CORE SNAKE CONTROLLER: EXACT 1-PIXEL STEP ON BUTTON PRESS
+  // Snake does NOT move on its own by default. Every tap moves exactly 1 pixel!
+  // =========================================================================
+  const stepSnake = (dir) => {
+    const s = stateRef.current;
+    if (gameState === 'gameover') return;
+
+    // Disallow 180° immediate reverse turn into oneself
+    const isOpposite =
+      (dir === 'UP' && s.snakeDir === 'DOWN') ||
+      (dir === 'DOWN' && s.snakeDir === 'UP') ||
+      (dir === 'LEFT' && s.snakeDir === 'RIGHT') ||
+      (dir === 'RIGHT' && s.snakeDir === 'LEFT');
+
+    if (isOpposite && s.snake.length > 1) {
+      return;
+    }
+
+    s.snakeDir = dir;
+    triggerHaptic(18);
+    sfx.step();
+
     const head = { ...s.snake[0] };
-    if (s.snakeDir === 'UP') head.y--;
-    else if (s.snakeDir === 'DOWN') head.y++;
-    else if (s.snakeDir === 'LEFT') head.x--;
-    else if (s.snakeDir === 'RIGHT') head.x++;
+    if (dir === 'UP') head.y--;
+    else if (dir === 'DOWN') head.y++;
+    else if (dir === 'LEFT') head.x--;
+    else if (dir === 'RIGHT') head.x++;
 
     // Wall Handling for 30x10 Matrix
     if (wallMode === 'wrap') {
-      // Wrap-Around (Torus): Allows continuous play in narrow 10-row space
+      // 30x10 Wrap-Around
       if (head.x < 0) head.x = MATRIX_WIDTH - 1;
       else if (head.x >= MATRIX_WIDTH) head.x = 0;
       if (head.y < 0) head.y = MATRIX_HEIGHT - 1;
       else if (head.y >= MATRIX_HEIGHT) head.y = 0;
     } else {
-      // Solid Walls (Hardcore)
+      // Solid Walls
       if (head.x < 0 || head.x >= MATRIX_WIDTH || head.y < 0 || head.y >= MATRIX_HEIGHT) {
         handleGameOver();
         return;
@@ -374,7 +383,7 @@ function GameControl({ onFrameUpdate, onToast }) {
     // Food Eaten?
     if (head.x === s.snakeFood.x && head.y === s.snakeFood.y) {
       sfx.score();
-      triggerHaptic(30);
+      triggerHaptic(35);
       s.snakeEatFlash = { x: head.x, y: head.y, ticks: 2 };
       setScore((sc) => {
         const next = sc + 10;
@@ -387,9 +396,23 @@ function GameControl({ onFrameUpdate, onToast }) {
     }
 
     s.snake = newSnake;
+
+    // Set playing state if was ready
+    if (gameState === 'ready') {
+      setGameState('playing');
+    }
+
+    // Render immediately (0ms delay)
     renderCurrentGame('snake');
   };
 
+  // Continuous Auto-Tick for Snake (Only used if user turns on Auto-Run mode)
+  const tickSnakeAuto = () => {
+    const s = stateRef.current;
+    stepSnake(s.snakeDir);
+  };
+
+  // Other Game Loops
   const tickPong = () => {
     const s = stateRef.current;
     let { x, y, vx, vy } = s.pongBall;
@@ -556,35 +579,41 @@ function GameControl({ onFrameUpdate, onToast }) {
     renderCurrentGame('breaker');
   };
 
-  // Main Loop Dispatcher
-  const gameStep = useCallback(() => {
-    if (activeGame === 'snake') tickSnake();
-    else if (activeGame === 'pong') tickPong();
-    else if (activeGame === 'defender') tickDefender();
-    else if (activeGame === 'breaker') tickBreaker();
-  }, [activeGame, wallMode]);
-
-  const handleGameOver = () => {
-    setGameState('gameover');
-    sfx.gameOver();
-    if (gameLoopRef.current) clearInterval(gameLoopRef.current);
-
-    // Death Flash on Matrix (bright red crash)
-    const s = stateRef.current;
-    const deathGrid = createEmptyGrid();
+  // Speed timings
+  const getSpeedMs = () => {
     if (activeGame === 'snake') {
-      s.snake.forEach((seg) => {
-        const idx = seg.y * MATRIX_WIDTH + seg.x;
-        if (idx >= 0 && idx < TOTAL_LEDS) deathGrid[idx] = [255, 0, 0];
-      });
-      if (onFrameUpdate) onFrameUpdate(deathGrid);
-      pushFrameToHardware(deathGrid);
+      if (speedLevel === 'slow') return 240;
+      if (speedLevel === 'fast') return 120;
+      return 170;
+    }
+    if (activeGame === 'pong') return speedLevel === 'fast' ? 65 : 90;
+    if (activeGame === 'defender') return speedLevel === 'fast' ? 55 : 75;
+    if (activeGame === 'breaker') return speedLevel === 'fast' ? 65 : 85;
+    return 140;
+  };
+
+  // Interval Manager (Only ticks continuously for Pong, Defender, Breaker, or if Snake Auto-Run is on)
+  useEffect(() => {
+    const shouldTickContinuously =
+      (activeGame === 'snake' && snakeControlMode === 'auto' && gameState === 'playing') ||
+      (activeGame !== 'snake' && gameState === 'playing');
+
+    if (shouldTickContinuously) {
+      const ms = getSpeedMs();
+      gameLoopRef.current = setInterval(() => {
+        if (activeGame === 'snake') tickSnakeAuto();
+        else if (activeGame === 'pong') tickPong();
+        else if (activeGame === 'defender') tickDefender();
+        else if (activeGame === 'breaker') tickBreaker();
+      }, ms);
+    } else {
+      if (gameLoopRef.current) clearInterval(gameLoopRef.current);
     }
 
-    if (onToast) {
-      onToast({ type: 'warning', message: `Game Over! Final Score: ${score}` });
-    }
-  };
+    return () => {
+      if (gameLoopRef.current) clearInterval(gameLoopRef.current);
+    };
+  }, [gameState, activeGame, snakeControlMode, speedLevel, wallMode]);
 
   const startGame = () => {
     sfx.init();
@@ -597,59 +626,51 @@ function GameControl({ onFrameUpdate, onToast }) {
   const pauseGame = () => {
     setGameState('paused');
     if (gameLoopRef.current) clearInterval(gameLoopRef.current);
+    if (autoRepeatTimerRef.current) clearTimeout(autoRepeatTimerRef.current);
+    if (autoRepeatIntervalRef.current) clearInterval(autoRepeatIntervalRef.current);
   };
 
   const resetGame = () => {
     if (gameLoopRef.current) clearInterval(gameLoopRef.current);
+    if (autoRepeatTimerRef.current) clearTimeout(autoRepeatTimerRef.current);
+    if (autoRepeatIntervalRef.current) clearInterval(autoRepeatIntervalRef.current);
     setGameState('ready');
     initGame(activeGame);
   };
 
-  // Interval Manager
-  useEffect(() => {
-    if (gameState === 'playing') {
-      const ms = getSpeedMs();
-      gameLoopRef.current = setInterval(gameStep, ms);
-    } else {
-      if (gameLoopRef.current) clearInterval(gameLoopRef.current);
-    }
-    return () => {
-      if (gameLoopRef.current) clearInterval(gameLoopRef.current);
-    };
-  }, [gameState, activeGame, speedLevel, wallMode, gameStep]);
-
   const switchGame = (gameId) => {
     if (gameLoopRef.current) clearInterval(gameLoopRef.current);
+    if (autoRepeatTimerRef.current) clearTimeout(autoRepeatTimerRef.current);
+    if (autoRepeatIntervalRef.current) clearInterval(autoRepeatIntervalRef.current);
     setActiveGame(gameId);
     setGameState('ready');
     initGame(gameId);
   };
 
-  // =========================================================================
-  // Buffered Mobile Joystick Turn Queue (Prevents missed turns & self-bites)
-  // =========================================================================
-  const handleSnakeInput = (dir) => {
-    const s = stateRef.current;
-    triggerHaptic(20);
+  // Touch Handlers with Auto-Repeat for Snake
+  const handleButtonDown = (dir) => {
+    sfx.init();
+    // 1. Move 1 pixel IMMEDIATELY!
+    stepSnake(dir);
 
-    const lastPlannedDir = s.snakeInputQueue.length > 0
-      ? s.snakeInputQueue[s.snakeInputQueue.length - 1]
-      : s.snakeDir;
+    // 2. Clear any lingering auto-repeat
+    if (autoRepeatTimerRef.current) clearTimeout(autoRepeatTimerRef.current);
+    if (autoRepeatIntervalRef.current) clearInterval(autoRepeatIntervalRef.current);
 
-    // Disallow 180° immediate reverse turn into oneself
-    const isOpposite =
-      (dir === 'UP' && lastPlannedDir === 'DOWN') ||
-      (dir === 'DOWN' && lastPlannedDir === 'UP') ||
-      (dir === 'LEFT' && lastPlannedDir === 'RIGHT') ||
-      (dir === 'RIGHT' && lastPlannedDir === 'LEFT');
-
-    if (!isOpposite && dir !== lastPlannedDir) {
-      if (s.snakeInputQueue.length < 2) {
-        s.snakeInputQueue.push(dir);
-      }
-    }
+    // 3. Auto-repeat if held down longer than 280ms
+    autoRepeatTimerRef.current = setTimeout(() => {
+      autoRepeatIntervalRef.current = setInterval(() => {
+        stepSnake(dir);
+      }, 150);
+    }, 280);
   };
 
+  const handleButtonUp = () => {
+    if (autoRepeatTimerRef.current) clearTimeout(autoRepeatTimerRef.current);
+    if (autoRepeatIntervalRef.current) clearInterval(autoRepeatIntervalRef.current);
+  };
+
+  // Other Game Inputs
   const handlePongMove = (delta) => {
     const s = stateRef.current;
     triggerHaptic(15);
@@ -685,42 +706,34 @@ function GameControl({ onFrameUpdate, onToast }) {
   // Keyboard Event Listeners
   useEffect(() => {
     const handleKeyDown = (e) => {
-      if (gameState !== 'playing') {
-        if (e.code === 'Space') {
-          e.preventDefault();
-          startGame();
-        }
-        return;
-      }
-
       if (activeGame === 'snake') {
-        if (e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W') { e.preventDefault(); handleSnakeInput('UP'); }
-        else if (e.key === 'ArrowDown' || e.key === 's' || e.key === 'S') { e.preventDefault(); handleSnakeInput('DOWN'); }
-        else if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') { e.preventDefault(); handleSnakeInput('LEFT'); }
-        else if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') { e.preventDefault(); handleSnakeInput('RIGHT'); }
-      } else if (activeGame === 'pong') {
-        if (e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W') { e.preventDefault(); handlePongMove(-1); }
-        else if (e.key === 'ArrowDown' || e.key === 's' || e.key === 'S') { e.preventDefault(); handlePongMove(1); }
-      } else if (activeGame === 'defender') {
-        if (e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W') { e.preventDefault(); handleDefenderMove(-1); }
-        else if (e.key === 'ArrowDown' || e.key === 's' || e.key === 'S') { e.preventDefault(); handleDefenderMove(1); }
-        else if (e.code === 'Space') { e.preventDefault(); handleDefenderFire(); }
-      } else if (activeGame === 'breaker') {
-        if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') { e.preventDefault(); handleBreakerMove(-2); }
-        else if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') { e.preventDefault(); handleBreakerMove(2); }
+        if (e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W') { e.preventDefault(); stepSnake('UP'); }
+        else if (e.key === 'ArrowDown' || e.key === 's' || e.key === 'S') { e.preventDefault(); stepSnake('DOWN'); }
+        else if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') { e.preventDefault(); stepSnake('LEFT'); }
+        else if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') { e.preventDefault(); stepSnake('RIGHT'); }
+        else if (e.code === 'Space') { e.preventDefault(); resetGame(); }
+      } else {
+        if (gameState !== 'playing') {
+          if (e.code === 'Space') { e.preventDefault(); startGame(); }
+          return;
+        }
+        if (activeGame === 'pong') {
+          if (e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W') { e.preventDefault(); handlePongMove(-1); }
+          else if (e.key === 'ArrowDown' || e.key === 's' || e.key === 'S') { e.preventDefault(); handlePongMove(1); }
+        } else if (activeGame === 'defender') {
+          if (e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W') { e.preventDefault(); handleDefenderMove(-1); }
+          else if (e.key === 'ArrowDown' || e.key === 's' || e.key === 'S') { e.preventDefault(); handleDefenderMove(1); }
+          else if (e.code === 'Space') { e.preventDefault(); handleDefenderFire(); }
+        } else if (activeGame === 'breaker') {
+          if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') { e.preventDefault(); handleBreakerMove(-2); }
+          else if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') { e.preventDefault(); handleBreakerMove(2); }
+        }
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [gameState, activeGame]);
-
-  const createTouchHandler = (actionFn) => ({
-    onPointerDown: (e) => {
-      e.preventDefault();
-      actionFn();
-    }
-  });
+  }, [gameState, activeGame, wallMode]);
 
   return (
     <div className="panel-card games-section-container">
@@ -756,17 +769,31 @@ function GameControl({ onFrameUpdate, onToast }) {
           </div>
 
           {activeGame === 'snake' && (
-            <div className="hud-metric-box">
-              <span className="hud-metric-label">WALL MODE</span>
-              <button
-                type="button"
-                className="wall-toggle-badge"
-                onClick={() => setWallMode(m => m === 'wrap' ? 'solid' : 'wrap')}
-                title="Click to toggle wrap-around vs solid walls"
-              >
-                {wallMode === 'wrap' ? '🌀 Wrap-Around (30×10)' : '🧱 Solid Walls'}
-              </button>
-            </div>
+            <>
+              <div className="hud-metric-box">
+                <span className="hud-metric-label">JOYSTICK MODE</span>
+                <button
+                  type="button"
+                  className="wall-toggle-badge"
+                  onClick={() => setSnakeControlMode(m => m === 'step' ? 'auto' : 'step')}
+                  title="Toggle Step-by-Step 1-Pixel vs Auto-Run"
+                >
+                  {snakeControlMode === 'step' ? '🕹️ 1-Pixel per Tap (Zero Lag)' : '⚡ Auto-Run'}
+                </button>
+              </div>
+
+              <div className="hud-metric-box">
+                <span className="hud-metric-label">WALLS</span>
+                <button
+                  type="button"
+                  className="wall-toggle-badge"
+                  onClick={() => setWallMode(m => m === 'wrap' ? 'solid' : 'wrap')}
+                  title="Toggle Wrap-Around vs Solid Walls"
+                >
+                  {wallMode === 'wrap' ? '🌀 Wrap-Around' : '🧱 Solid'}
+                </button>
+              </div>
+            </>
           )}
 
           {(activeGame === 'pong' || activeGame === 'defender' || activeGame === 'breaker') && (
@@ -781,30 +808,32 @@ function GameControl({ onFrameUpdate, onToast }) {
 
         {/* Action Controls */}
         <div className="game-hud-actions">
-          {gameState !== 'playing' ? (
-            <button
-              type="button"
-              className="game-action-btn primary pulse-glow"
-              onClick={startGame}
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-                <polygon points="5 3 19 12 5 21 5 3" />
-              </svg>
-              <span>{gameState === 'paused' ? 'RESUME' : 'START GAME'}</span>
-            </button>
-          ) : (
-            <button
-              type="button"
-              className="game-action-btn warning"
-              onClick={pauseGame}
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-                <rect x="6" y="4" width="4" height="16" />
-                <rect x="14" y="4" width="4" height="16" />
-              </svg>
-              <span>PAUSE</span>
-            </button>
-          )}
+          {activeGame !== 'snake' || snakeControlMode === 'auto' ? (
+            gameState !== 'playing' ? (
+              <button
+                type="button"
+                className="game-action-btn primary pulse-glow"
+                onClick={startGame}
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                  <polygon points="5 3 19 12 5 21 5 3" />
+                </svg>
+                <span>{gameState === 'paused' ? 'RESUME' : 'START'}</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="game-action-btn warning"
+                onClick={pauseGame}
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                  <rect x="6" y="4" width="4" height="16" />
+                  <rect x="14" y="4" width="4" height="16" />
+                </svg>
+                <span>PAUSE</span>
+              </button>
+            )
+          ) : null}
 
           <button
             type="button"
@@ -844,7 +873,7 @@ function GameControl({ onFrameUpdate, onToast }) {
               Matrix Link: {matrixStatus}
             </span>
           ) : (
-            <span className="stream-paused">⚪ Simulator Only (Fastest)</span>
+            <span className="stream-paused">⚪ Simulator Only</span>
           )}
         </div>
 
@@ -869,20 +898,28 @@ function GameControl({ onFrameUpdate, onToast }) {
         <div className="gamepad-header-row">
           <div className="gamepad-brand-label">
             <span className="gamepad-dpad-icon">🕹️</span>
-            <span>VIRTUAL PHONE GAMEPAD — {GAMES.find((g) => g.id === activeGame)?.name.toUpperCase()}</span>
+            <span>
+              {activeGame === 'snake' && snakeControlMode === 'step'
+                ? 'PHONE JOYSTICK — TAP ARROW TO MOVE 1 PIXEL (HOLD TO CRUISE)'
+                : `VIRTUAL GAMEPAD — ${GAMES.find((g) => g.id === activeGame)?.name.toUpperCase()}`}
+            </span>
           </div>
-          <span className="gamepad-hint-chip">Touch / Click / Keyboard (Arrows/WASD)</span>
+          <span className="gamepad-hint-chip">
+            {activeGame === 'snake' ? 'Tap: 1 px move | Hold: continuous move' : 'Touch / Keyboard Controls'}
+          </span>
         </div>
 
-        {/* 1. SNAKE GAMEPAD: 4-WAY CROSS D-PAD WITH QUEUED TURNS */}
+        {/* 1. SNAKE GAMEPAD: 4-WAY CROSS D-PAD (1 PIXEL PER TAP) */}
         {activeGame === 'snake' && (
           <div className="dpad-container">
             <div className="dpad-cross">
               <button
                 type="button"
                 className="dpad-btn dpad-up"
-                {...createTouchHandler(() => handleSnakeInput('UP'))}
-                aria-label="Up"
+                onPointerDown={(e) => { e.preventDefault(); handleButtonDown('UP'); }}
+                onPointerUp={(e) => { e.preventDefault(); handleButtonUp(); }}
+                onPointerLeave={handleButtonUp}
+                aria-label="Move Up 1 Pixel"
               >
                 ▲
               </button>
@@ -890,19 +927,23 @@ function GameControl({ onFrameUpdate, onToast }) {
                 <button
                   type="button"
                   className="dpad-btn dpad-left"
-                  {...createTouchHandler(() => handleSnakeInput('LEFT'))}
-                  aria-label="Left"
+                  onPointerDown={(e) => { e.preventDefault(); handleButtonDown('LEFT'); }}
+                  onPointerUp={(e) => { e.preventDefault(); handleButtonUp(); }}
+                  onPointerLeave={handleButtonUp}
+                  aria-label="Move Left 1 Pixel"
                 >
                   ◀
                 </button>
                 <div className="dpad-center-hub">
-                  <span className="dpad-matrix-badge">30×10</span>
+                  <span className="dpad-matrix-badge">1-PX</span>
                 </div>
                 <button
                   type="button"
                   className="dpad-btn dpad-right"
-                  {...createTouchHandler(() => handleSnakeInput('RIGHT'))}
-                  aria-label="Right"
+                  onPointerDown={(e) => { e.preventDefault(); handleButtonDown('RIGHT'); }}
+                  onPointerUp={(e) => { e.preventDefault(); handleButtonUp(); }}
+                  onPointerLeave={handleButtonUp}
+                  aria-label="Move Right 1 Pixel"
                 >
                   ▶
                 </button>
@@ -910,8 +951,10 @@ function GameControl({ onFrameUpdate, onToast }) {
               <button
                 type="button"
                 className="dpad-btn dpad-down"
-                {...createTouchHandler(() => handleSnakeInput('DOWN'))}
-                aria-label="Down"
+                onPointerDown={(e) => { e.preventDefault(); handleButtonDown('DOWN'); }}
+                onPointerUp={(e) => { e.preventDefault(); handleButtonUp(); }}
+                onPointerLeave={handleButtonUp}
+                aria-label="Move Down 1 Pixel"
               >
                 ▼
               </button>
@@ -927,7 +970,7 @@ function GameControl({ onFrameUpdate, onToast }) {
               <button
                 type="button"
                 className="arcade-large-btn cyan-btn"
-                {...createTouchHandler(() => handlePongMove(-1))}
+                onPointerDown={(e) => { e.preventDefault(); handlePongMove(-1); }}
               >
                 <span className="arcade-btn-arrow">▲</span>
                 <span className="arcade-btn-title">SLIDE PADDLE UP</span>
@@ -935,7 +978,7 @@ function GameControl({ onFrameUpdate, onToast }) {
               <button
                 type="button"
                 className="arcade-large-btn cyan-btn"
-                {...createTouchHandler(() => handlePongMove(1))}
+                onPointerDown={(e) => { e.preventDefault(); handlePongMove(1); }}
               >
                 <span className="arcade-btn-arrow">▼</span>
                 <span className="arcade-btn-title">SLIDE PADDLE DOWN</span>
@@ -953,14 +996,14 @@ function GameControl({ onFrameUpdate, onToast }) {
                 <button
                   type="button"
                   className="arcade-square-btn"
-                  {...createTouchHandler(() => handleDefenderMove(-1))}
+                  onPointerDown={(e) => { e.preventDefault(); handleDefenderMove(-1); }}
                 >
                   ▲ UP
                 </button>
                 <button
                   type="button"
                   className="arcade-square-btn"
-                  {...createTouchHandler(() => handleDefenderMove(1))}
+                  onPointerDown={(e) => { e.preventDefault(); handleDefenderMove(1); }}
                 >
                   ▼ DOWN
                 </button>
@@ -972,7 +1015,7 @@ function GameControl({ onFrameUpdate, onToast }) {
               <button
                 type="button"
                 className="arcade-fire-btn pulse-glow"
-                {...createTouchHandler(handleDefenderFire)}
+                onPointerDown={(e) => { e.preventDefault(); handleDefenderFire(); }}
               >
                 <span className="fire-icon">💥</span>
                 <span className="fire-label">FIRE LASER</span>
@@ -989,7 +1032,7 @@ function GameControl({ onFrameUpdate, onToast }) {
               <button
                 type="button"
                 className="arcade-large-btn pink-btn"
-                {...createTouchHandler(() => handleBreakerMove(-2))}
+                onPointerDown={(e) => { e.preventDefault(); handleBreakerMove(-2); }}
               >
                 <span className="arcade-btn-arrow">◀</span>
                 <span className="arcade-btn-title">MOVE LEFT</span>
@@ -997,7 +1040,7 @@ function GameControl({ onFrameUpdate, onToast }) {
               <button
                 type="button"
                 className="arcade-large-btn cyan-btn"
-                {...createTouchHandler(() => handleBreakerMove(2))}
+                onPointerDown={(e) => { e.preventDefault(); handleBreakerMove(2); }}
               >
                 <span className="arcade-btn-arrow">▶</span>
                 <span className="arcade-btn-title">MOVE RIGHT</span>
@@ -1007,30 +1050,23 @@ function GameControl({ onFrameUpdate, onToast }) {
         )}
       </div>
 
-      {/* Speed Selector Footer */}
+      {/* Speed & Mode Footer */}
       <div className="game-footer-settings">
-        <span className="footer-label">Snake Engine Speed (30×10):</span>
+        <span className="footer-label">Snake Mode:</span>
         <div className="speed-pills">
           <button
             type="button"
-            className={`speed-pill ${speedLevel === 'slow' ? 'active' : ''}`}
-            onClick={() => setSpeedLevel('slow')}
+            className={`speed-pill ${snakeControlMode === 'step' ? 'active' : ''}`}
+            onClick={() => setSnakeControlMode('step')}
           >
-            Matrix Relaxed (210ms)
+            🕹️ 1-Pixel Step (Manual)
           </button>
           <button
             type="button"
-            className={`speed-pill ${speedLevel === 'normal' ? 'active' : ''}`}
-            onClick={() => setSpeedLevel('normal')}
+            className={`speed-pill ${snakeControlMode === 'auto' ? 'active' : ''}`}
+            onClick={() => setSnakeControlMode('auto')}
           >
-            Matrix Standard (155ms)
-          </button>
-          <button
-            type="button"
-            className={`speed-pill ${speedLevel === 'fast' ? 'active' : ''}`}
-            onClick={() => setSpeedLevel('fast')}
-          >
-            Matrix Turbo (110ms) 🔥
+            ⚡ Auto-Run (Continuous)
           </button>
         </div>
       </div>
