@@ -85,7 +85,7 @@ function GameControl({ onFrameUpdate, onToast }) {
   const [score, setScore] = useState(0);
   const [highScore, setHighScore] = useState(0);
   const [snakeLength, setSnakeLength] = useState(3);
-  const [speedLevel, setSpeedLevel] = useState('normal'); // 'slow' | 'normal' | 'fast'
+  const [speedLevel, setSpeedLevel] = useState('slow'); // 'slow' (460ms) | 'normal' (360ms) | 'fast' (270ms)
   const [lives, setLives] = useState(3);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [syncToMatrix, setSyncToMatrix] = useState(true);
@@ -185,6 +185,11 @@ function GameControl({ onFrameUpdate, onToast }) {
       })
       .finally(() => {
         isTransmittingRef.current = false;
+        if (pendingFrameRef.current) {
+          const next = pendingFrameRef.current;
+          pendingFrameRef.current = null;
+          pushFrameToHardware(next);
+        }
       });
   }, [syncToMatrix]);
 
@@ -633,7 +638,8 @@ function GameControl({ onFrameUpdate, onToast }) {
     if (gameState === 'playing') {
       let ms;
       if (activeGame === 'snake') {
-        ms = speedLevel === 'slow' ? 220 : speedLevel === 'fast' ? 120 : 170;
+        // Slow and steady pixel-by-pixel pace (allows complete frame sync on LED matrix)
+        ms = speedLevel === 'slow' ? 460 : speedLevel === 'fast' ? 270 : 360;
       } else if (activeGame === 'pong') {
         ms = 85;
       } else if (activeGame === 'defender') {
@@ -812,25 +818,25 @@ function GameControl({ onFrameUpdate, onToast }) {
                     type="button"
                     className={`speed-pill-btn ${speedLevel === 'slow' ? 'active' : ''}`}
                     onClick={() => setSpeedLevel('slow')}
-                    title="Slow Speed (0.7x)"
+                    title="Slow Pace (460ms/pixel)"
                   >
-                    🐢
+                    🐢 Slow
                   </button>
                   <button
                     type="button"
                     className={`speed-pill-btn ${speedLevel === 'normal' ? 'active' : ''}`}
                     onClick={() => setSpeedLevel('normal')}
-                    title="Normal Speed (1.0x)"
+                    title="Normal Pace (360ms/pixel)"
                   >
-                    🟢
+                    🟢 Normal
                   </button>
                   <button
                     type="button"
                     className={`speed-pill-btn ${speedLevel === 'fast' ? 'active' : ''}`}
                     onClick={() => setSpeedLevel('fast')}
-                    title="Fast Speed (1.4x)"
+                    title="Brisk Pace (270ms/pixel)"
                   >
-                    ⚡
+                    ⚡ Fast
                   </button>
                 </div>
               </div>
