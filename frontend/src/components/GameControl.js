@@ -52,6 +52,13 @@ class SoundFX {
     setTimeout(() => this.playTone(880, 0.1, 'square'), 60);
   }
 
+  bonus() {
+    this.playTone(523, 0.07, 'triangle');
+    setTimeout(() => this.playTone(659, 0.07, 'triangle'), 70);
+    setTimeout(() => this.playTone(784, 0.09, 'square'), 140);
+    setTimeout(() => this.playTone(1046, 0.2, 'square'), 210);
+  }
+
   fire() {
     this.playTone(750, 0.04, 'sawtooth');
   }
@@ -85,7 +92,9 @@ function GameControl({ onFrameUpdate, onToast }) {
   const [score, setScore] = useState(0);
   const [highScore, setHighScore] = useState(0);
   const [snakeLength, setSnakeLength] = useState(3);
-  const [speedLevel, setSpeedLevel] = useState('slow'); // 'slow' (460ms) | 'normal' (360ms) | 'fast' (270ms)
+  const [applesEaten, setApplesEaten] = useState(0);
+  const [currentDirection, setCurrentDirection] = useState('RIGHT');
+  const [speedLevel, setSpeedLevel] = useState('slow'); // 'slow' (380ms) | 'normal' (260ms) | 'fast' (170ms) | 'turbo' (100ms)
   const [lives, setLives] = useState(3);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [syncToMatrix, setSyncToMatrix] = useState(true);
@@ -108,6 +117,8 @@ function GameControl({ onFrameUpdate, onToast }) {
     snakeDir: 'RIGHT',
     nextSnakeDir: 'RIGHT',
     snakeFood: { x: 20, y: 5 },
+    bonusFood: null,
+    applesEaten: 0,
     snakeEatFlash: null,
     isGameOver: false,
 
@@ -228,8 +239,14 @@ function GameControl({ onFrameUpdate, onToast }) {
 
     if (gameId === 'snake') {
       // 1. Food: Pulsing Neon Cherry Red
-      const foodBlink = Math.floor(Date.now() / 250) % 2 === 0;
+      const foodBlink = Math.floor(Date.now() / 240) % 2 === 0;
       setPixel(s.snakeFood.x, s.snakeFood.y, foodBlink ? [255, 0, 75] : [160, 0, 45]);
+
+      // 1b. Bonus Golden Star Fruit (Shimmering Gold)
+      if (s.bonusFood && Date.now() < s.bonusFood.expiresAt) {
+        const starBlink = Math.floor(Date.now() / 140) % 2 === 0;
+        setPixel(s.bonusFood.x, s.bonusFood.y, starBlink ? [255, 230, 0] : [255, 130, 0]);
+      }
 
       // 2. Snake Body: Gradient Emerald Neon Green
       for (let i = 1; i < s.snake.length; i++) {
@@ -249,6 +266,14 @@ function GameControl({ onFrameUpdate, onToast }) {
       if (s.snakeEatFlash && s.snakeEatFlash.ticks > 0) {
         setPixel(s.snakeEatFlash.x, s.snakeEatFlash.y, [255, 230, 0]);
         s.snakeEatFlash.ticks--;
+      }
+
+      // 5. Pause Indicator: Neon Cyan || in center of 30x10 matrix
+      if (gameState === 'paused') {
+        for (let y = 3; y <= 6; y++) {
+          setPixel(13, y, [0, 240, 255]);
+          setPixel(16, y, [0, 240, 255]);
+        }
       }
     } else if (gameId === 'pong') {
       for (let i = 0; i < s.pongPaddleH; i++) {
@@ -291,9 +316,13 @@ function GameControl({ onFrameUpdate, onToast }) {
       s.snakeDir = 'RIGHT';
       s.nextSnakeDir = 'RIGHT';
       s.snakeFood = spawnFood(s.snake);
+      s.bonusFood = null;
+      s.applesEaten = 0;
       s.snakeEatFlash = null;
       s.isGameOver = false;
       setSnakeLength(3);
+      setApplesEaten(0);
+      setCurrentDirection('RIGHT');
     } else if (gameId === 'pong') {
       setLives(3);
       s.pongPaddleY = 3;
@@ -346,9 +375,20 @@ function GameControl({ onFrameUpdate, onToast }) {
     // Flash snake red on crash
     const deathGrid = createEmptyGrid();
     if (activeGame === 'snake') {
-      s.snake.forEach((seg) => {
+      if (reason === 'boundary') {
+        // Highlight boundary perimeter in warning red
+        for (let x = 0; x < MATRIX_WIDTH; x++) {
+          deathGrid[x] = [255, 30, 30];
+          deathGrid[(MATRIX_HEIGHT - 1) * MATRIX_WIDTH + x] = [255, 30, 30];
+        }
+        for (let y = 0; y < MATRIX_HEIGHT; y++) {
+          deathGrid[y * MATRIX_WIDTH] = [255, 30, 30];
+          deathGrid[y * MATRIX_WIDTH + (MATRIX_WIDTH - 1)] = [255, 30, 30];
+        }
+      }
+      s.snake.forEach((seg, i) => {
         const idx = seg.y * MATRIX_WIDTH + seg.x;
-        if (idx >= 0 && idx < TOTAL_LEDS) deathGrid[idx] = [255, 0, 0];
+        if (idx >= 0 && idx < TOTAL_LEDS) deathGrid[idx] = i === 0 ? [255, 255, 255] : [255, 0, 0];
       });
       if (onFrameUpdate) onFrameUpdate(deathGrid);
       pushFrameToHardware(deathGrid);
@@ -441,16 +481,37 @@ function GameControl({ onFrameUpdate, onToast }) {
       return;
     }
 
-    // Legal move
+    // Move is legal
     sfx.step();
+    setCurrentDirection(effectiveDir);
 
     const newSnake = [head, ...s.snake];
 
-    // Check if food was eaten
+    // Check if bonus golden food was eaten (+30 pts)
+    let ateBonus = false;
+    if (s.bonusFood && Date.now() < s.bonusFood.expiresAt) {
+      if (head.x === s.bonusFood.x && head.y === s.bonusFood.y) {
+        ateBonus = true;
+        s.bonusFood = null;
+        sfx.bonus();
+        triggerHaptic(45);
+        s.snakeEatFlash = { x: head.x, y: head.y, ticks: 3 };
+        setScore((sc) => {
+          const next = sc + 30;
+          updateHighScore(next);
+          return next;
+        });
+        if (onToast) onToast({ type: 'success', message: '🌟 Golden Star Eaten! +30 BONUS POINTS!' });
+      }
+    }
+
+    // Check if regular food was eaten (+10 pts)
     if (isEating) {
       sfx.score();
-      triggerHaptic(35);
+      triggerHaptic(30);
       s.snakeEatFlash = { x: head.x, y: head.y, ticks: 2 };
+      s.applesEaten = (s.applesEaten || 0) + 1;
+      setApplesEaten(s.applesEaten);
       setScore((sc) => {
         const next = sc + 10;
         updateHighScore(next);
@@ -458,7 +519,16 @@ function GameControl({ onFrameUpdate, onToast }) {
       });
       setSnakeLength((len) => len + 1);
       s.snakeFood = spawnFood(newSnake);
-    } else {
+
+      // Every 4 regular apples, spawn a bonus golden star fruit for 12 seconds!
+      if (s.applesEaten % 4 === 0) {
+        s.bonusFood = {
+          ...spawnFood([s.snakeFood, ...newSnake]),
+          expiresAt: Date.now() + 12000
+        };
+        if (onToast) onToast({ type: 'info', message: '⭐ A Golden Star Fruit appeared on the matrix!' });
+      }
+    } else if (!ateBonus) {
       newSnake.pop();
     }
 
@@ -812,6 +882,11 @@ function GameControl({ onFrameUpdate, onToast }) {
               </div>
 
               <div className="hud-metric-box">
+                <span className="hud-metric-label">APPLES</span>
+                <span className="hud-metric-val neon-pink-text">{applesEaten} 🍎</span>
+              </div>
+
+              <div className="hud-metric-box">
                 <span className="hud-metric-label">SPEED</span>
                 <div className="speed-pill-group">
                   <button
@@ -975,7 +1050,7 @@ function GameControl({ onFrameUpdate, onToast }) {
             <div className="dpad-cross">
               <button
                 type="button"
-                className="dpad-btn dpad-up"
+                className={`dpad-btn dpad-up ${currentDirection === 'UP' ? 'active-steer' : ''}`}
                 onPointerDown={(e) => {
                   e.preventDefault();
                   handleSnakeDirectionChange('UP');
@@ -988,7 +1063,7 @@ function GameControl({ onFrameUpdate, onToast }) {
               <div className="dpad-row-middle">
                 <button
                   type="button"
-                  className="dpad-btn dpad-left"
+                  className={`dpad-btn dpad-left ${currentDirection === 'LEFT' ? 'active-steer' : ''}`}
                   onPointerDown={(e) => {
                     e.preventDefault();
                     handleSnakeDirectionChange('LEFT');
@@ -1003,7 +1078,7 @@ function GameControl({ onFrameUpdate, onToast }) {
                 </div>
                 <button
                   type="button"
-                  className="dpad-btn dpad-right"
+                  className={`dpad-btn dpad-right ${currentDirection === 'RIGHT' ? 'active-steer' : ''}`}
                   onPointerDown={(e) => {
                     e.preventDefault();
                     handleSnakeDirectionChange('RIGHT');
@@ -1016,7 +1091,7 @@ function GameControl({ onFrameUpdate, onToast }) {
               </div>
               <button
                 type="button"
-                className="dpad-btn dpad-down"
+                className={`dpad-btn dpad-down ${currentDirection === 'DOWN' ? 'active-steer' : ''}`}
                 onPointerDown={(e) => {
                   e.preventDefault();
                   handleSnakeDirectionChange('DOWN');

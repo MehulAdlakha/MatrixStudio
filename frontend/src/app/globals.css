@@ -1602,4 +1602,9 @@ html, body {
   box-shadow: 0 0 8px rgba(0, 240, 255, 0.4);
 }
 
-
+.dpad-btn.active-steer {
+  border-color: var(--neon-cyan);
+  box-shadow: 0 0 16px rgba(0, 240, 255, 0.45);
+  background: linear-gradient(180deg, #1b3852 0%, #102035 100%);
+  color: var(--neon-cyan);
+}
