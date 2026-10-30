@@ -44,7 +44,7 @@ class SoundFX {
   }
 
   step() {
-    this.playTone(480, 0.03, 'sine');
+    this.playTone(480, 0.025, 'sine');
   }
 
   score() {
@@ -73,7 +73,7 @@ const sfx = new SoundFX();
 // Game Metadata
 // =========================================================================
 const GAMES = [
-  { id: 'snake', name: 'Cyber Snake', icon: '🐍', tag: '1 Press = 1 Pixel' },
+  { id: 'snake', name: 'Cyber Snake', icon: '🐍', tag: 'Tap or Continuous Hold' },
   { id: 'pong', name: 'Cyber Pong', icon: '🏓', tag: 'Solo Wall Bounce' },
   { id: 'defender', name: 'Galaxy Defender', icon: '🚀', tag: 'Space Shooter' },
   { id: 'breaker', name: 'Brick Breaker', icon: '🧱', tag: 'Retro Breakout' }
@@ -85,6 +85,7 @@ function GameControl({ onFrameUpdate, onToast }) {
   const [score, setScore] = useState(0);
   const [highScore, setHighScore] = useState(0);
   const [snakeLength, setSnakeLength] = useState(3);
+  const [speedLevel, setSpeedLevel] = useState('normal'); // 'slow' | 'normal' | 'fast'
   const [lives, setLives] = useState(3);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [syncToMatrix, setSyncToMatrix] = useState(true);
@@ -95,6 +96,11 @@ function GameControl({ onFrameUpdate, onToast }) {
   const isTransmittingRef = useRef(false);
   const pendingFrameRef = useRef(null);
 
+  // Continuous Hold Movement References (Tap: 1 px | Hold: continuous px-by-px)
+  const holdTimerRef = useRef(null);
+  const holdIntervalRef = useRef(null);
+  const activeDirectionRef = useRef(null);
+
   // Mutable Game Engine State
   const stateRef = useRef({
     // Snake State
@@ -102,6 +108,7 @@ function GameControl({ onFrameUpdate, onToast }) {
     snakeDir: 'RIGHT',
     snakeFood: { x: 20, y: 5 },
     snakeEatFlash: null,
+    isGameOver: false,
 
     // Pong State
     pongPaddleY: 3,
@@ -146,6 +153,13 @@ function GameControl({ onFrameUpdate, onToast }) {
     if (typeof window !== 'undefined' && 'navigator' in window && navigator.vibrate) {
       try { navigator.vibrate(ms); } catch (e) {}
     }
+  };
+
+  // Continuous Hold Speed (ms per pixel step)
+  const getHoldSpeedMs = () => {
+    if (speedLevel === 'slow') return 200;
+    if (speedLevel === 'fast') return 85;
+    return 135;
   };
 
   // =========================================================================
@@ -210,7 +224,7 @@ function GameControl({ onFrameUpdate, onToast }) {
     };
 
     if (gameId === 'snake') {
-      // 1. Food: Blinking Pulsing Neon Cherry Red
+      // 1. Food: Pulsing Neon Cherry Red
       const foodBlink = Math.floor(Date.now() / 250) % 2 === 0;
       setPixel(s.snakeFood.x, s.snakeFood.y, foodBlink ? [255, 0, 75] : [160, 0, 45]);
 
@@ -266,6 +280,7 @@ function GameControl({ onFrameUpdate, onToast }) {
 
   const initGame = useCallback((gameId = activeGame) => {
     const s = stateRef.current;
+    s.isGameOver = false;
     setScore(0);
 
     if (gameId === 'snake') {
@@ -300,13 +315,30 @@ function GameControl({ onFrameUpdate, onToast }) {
     renderCurrentGame(gameId);
   }, [activeGame, renderCurrentGame]);
 
+  // Clean stop for continuous hold timers
+  const stopContinuousPress = useCallback((dir) => {
+    if (!dir || activeDirectionRef.current === dir) {
+      activeDirectionRef.current = null;
+      if (holdTimerRef.current) {
+        clearTimeout(holdTimerRef.current);
+        holdTimerRef.current = null;
+      }
+      if (holdIntervalRef.current) {
+        clearInterval(holdIntervalRef.current);
+        holdIntervalRef.current = null;
+      }
+    }
+  }, []);
+
   const handleGameOver = (reason = 'crash') => {
+    const s = stateRef.current;
+    s.isGameOver = true;
     setGameState('gameover');
     sfx.gameOver();
+    stopContinuousPress();
     if (gameLoopRef.current) clearInterval(gameLoopRef.current);
 
     // Flash snake red on crash
-    const s = stateRef.current;
     const deathGrid = createEmptyGrid();
     if (activeGame === 'snake') {
       s.snake.forEach((seg) => {
@@ -329,14 +361,14 @@ function GameControl({ onFrameUpdate, onToast }) {
   };
 
   // =========================================================================
-  // CORE SNAKE CONTROLLER (STRICT RULES IMPLEMENTATION)
-  // Rule 1: EXACTLY 1 pixel per press (no auto-repeat, no continuous running).
+  // CORE SNAKE CONTROLLER (EXACT 1-PIXEL STEP)
+  // Rule 1: Step 1 pixel in the chosen direction.
   // Rule 2: Strictly enforced boundaries (0..29, 0..9). Moving beyond ends game.
   // Rule 3: Mouth touching any body/tail segment ends game.
   // =========================================================================
   const stepSnake = (dir) => {
     const s = stateRef.current;
-    if (gameState === 'gameover') return;
+    if (s.isGameOver) return;
 
     // Advance head coordinates by exactly 1 pixel
     const head = { ...s.snake[0] };
@@ -347,7 +379,7 @@ function GameControl({ onFrameUpdate, onToast }) {
 
     // -----------------------------------------------------------------------
     // RULE 2: BOUNDARY CHECK
-    // If snake tries to move beyond the last pixel (0..29 horizontally, 0..9 vertically) -> GAME ENDS!
+    // If snake tries to move beyond the last pixel (0..29, 0..9) -> GAME OVER!
     // -----------------------------------------------------------------------
     if (head.x < 0 || head.x >= MATRIX_WIDTH || head.y < 0 || head.y >= MATRIX_HEIGHT) {
       handleGameOver('boundary');
@@ -356,9 +388,11 @@ function GameControl({ onFrameUpdate, onToast }) {
 
     // -----------------------------------------------------------------------
     // RULE 3: MOUTH TOUCHING TAIL / BODY CHECK
-    // If snake mouth (new head position) touches any body or tail segment -> GAME ENDS!
+    // If snake mouth (new head position) touches any body or tail segment -> GAME OVER!
     // -----------------------------------------------------------------------
-    const mouthTouchesTail = s.snake.some((seg) => seg.x === head.x && seg.y === head.y);
+    const isEating = head.x === s.snakeFood.x && head.y === s.snakeFood.y;
+    const bodyToCheck = isEating ? s.snake : s.snake.slice(0, -1);
+    const mouthTouchesTail = bodyToCheck.some((seg) => seg.x === head.x && seg.y === head.y);
     if (mouthTouchesTail) {
       handleGameOver('self');
       return;
@@ -366,13 +400,13 @@ function GameControl({ onFrameUpdate, onToast }) {
 
     // Move is legal: apply sound, haptics, direction
     s.snakeDir = dir;
-    triggerHaptic(18);
+    triggerHaptic(16);
     sfx.step();
 
     const newSnake = [head, ...s.snake];
 
     // Check if food was eaten
-    if (head.x === s.snakeFood.x && head.y === s.snakeFood.y) {
+    if (isEating) {
       sfx.score();
       triggerHaptic(35);
       s.snakeEatFlash = { x: head.x, y: head.y, ticks: 2 };
@@ -396,6 +430,45 @@ function GameControl({ onFrameUpdate, onToast }) {
 
     // Render immediately (0ms delay)
     renderCurrentGame('snake');
+  };
+
+  // =========================================================================
+  // CONTINUOUS PRESS CONTROLLER:
+  // - Tap once: moves 1 pixel immediately.
+  // - Continuously hold down: moves continuously pixel-by-pixel!
+  // - Release: stops immediately!
+  // =========================================================================
+  const startContinuousPress = (dir) => {
+    sfx.init();
+    const s = stateRef.current;
+    if (s.isGameOver) return;
+
+    activeDirectionRef.current = dir;
+
+    // 1. Step 1 pixel immediately!
+    stepSnake(dir);
+
+    // 2. Clear any active hold timers
+    if (holdTimerRef.current) clearTimeout(holdTimerRef.current);
+    if (holdIntervalRef.current) clearInterval(holdIntervalRef.current);
+
+    // If game ended on that initial step, don't schedule repeat
+    if (s.isGameOver) return;
+
+    // 3. If continuously held down for >200ms, continue moving pixel-by-pixel!
+    const repeatSpeed = getHoldSpeedMs();
+    holdTimerRef.current = setTimeout(() => {
+      if (s.isGameOver) return;
+      holdIntervalRef.current = setInterval(() => {
+        if (s.isGameOver) {
+          stopContinuousPress();
+          return;
+        }
+        if (activeDirectionRef.current) {
+          stepSnake(activeDirectionRef.current);
+        }
+      }, repeatSpeed);
+    }, 200);
   };
 
   // Other Game Loops (Pong, Defender, Breaker)
@@ -566,7 +639,6 @@ function GameControl({ onFrameUpdate, onToast }) {
   };
 
   // Interval Manager for Real-Time arcade games (Pong, Defender, Breaker)
-  // Snake does NOT run any background interval - it is strictly 1-pixel per button press!
   useEffect(() => {
     if (activeGame !== 'snake' && gameState === 'playing') {
       const ms = activeGame === 'pong' ? 85 : activeGame === 'defender' ? 70 : 80;
@@ -594,29 +666,23 @@ function GameControl({ onFrameUpdate, onToast }) {
 
   const pauseGame = () => {
     setGameState('paused');
+    stopContinuousPress();
     if (gameLoopRef.current) clearInterval(gameLoopRef.current);
   };
 
   const resetGame = () => {
+    stopContinuousPress();
     if (gameLoopRef.current) clearInterval(gameLoopRef.current);
     setGameState('ready');
     initGame(activeGame);
   };
 
   const switchGame = (gameId) => {
+    stopContinuousPress();
     if (gameLoopRef.current) clearInterval(gameLoopRef.current);
     setActiveGame(gameId);
     setGameState('ready');
     initGame(gameId);
-  };
-
-  // =========================================================================
-  // RULE 1: STRICT SINGLE PIXEL PER PRESS
-  // One press = One pixel. Holding down does NOT repeat.
-  // =========================================================================
-  const handleSinglePixelPress = (dir) => {
-    sfx.init();
-    stepSnake(dir);
   };
 
   // Other Game Inputs
@@ -652,15 +718,26 @@ function GameControl({ onFrameUpdate, onToast }) {
     renderCurrentGame('breaker');
   };
 
-  // Keyboard Event Listeners
+  // Keyboard Event Listeners with continuous hold support
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (activeGame === 'snake') {
-        if (e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W') { e.preventDefault(); handleSinglePixelPress('UP'); }
-        else if (e.key === 'ArrowDown' || e.key === 's' || e.key === 'S') { e.preventDefault(); handleSinglePixelPress('DOWN'); }
-        else if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') { e.preventDefault(); handleSinglePixelPress('LEFT'); }
-        else if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') { e.preventDefault(); handleSinglePixelPress('RIGHT'); }
-        else if (e.code === 'Space') { e.preventDefault(); resetGame(); }
+        if (e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W') {
+          e.preventDefault();
+          if (!e.repeat) startContinuousPress('UP');
+        } else if (e.key === 'ArrowDown' || e.key === 's' || e.key === 'S') {
+          e.preventDefault();
+          if (!e.repeat) startContinuousPress('DOWN');
+        } else if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') {
+          e.preventDefault();
+          if (!e.repeat) startContinuousPress('LEFT');
+        } else if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') {
+          e.preventDefault();
+          if (!e.repeat) startContinuousPress('RIGHT');
+        } else if (e.code === 'Space') {
+          e.preventDefault();
+          resetGame();
+        }
       } else {
         if (gameState !== 'playing') {
           if (e.code === 'Space') { e.preventDefault(); startGame(); }
@@ -680,9 +757,23 @@ function GameControl({ onFrameUpdate, onToast }) {
       }
     };
 
+    const handleKeyUp = (e) => {
+      if (activeGame === 'snake') {
+        if (e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W') stopContinuousPress('UP');
+        else if (e.key === 'ArrowDown' || e.key === 's' || e.key === 'S') stopContinuousPress('DOWN');
+        else if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') stopContinuousPress('LEFT');
+        else if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') stopContinuousPress('RIGHT');
+      }
+    };
+
     window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [gameState, activeGame]);
+    window.addEventListener('keyup', handleKeyUp);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+      stopContinuousPress();
+    };
+  }, [gameState, activeGame, stopContinuousPress]);
 
   return (
     <div className="panel-card games-section-container">
@@ -837,24 +928,36 @@ function GameControl({ onFrameUpdate, onToast }) {
             <span className="gamepad-dpad-icon">🕹️</span>
             <span>
               {activeGame === 'snake'
-                ? 'PHONE JOYSTICK — 1 TAP = 1 PIXEL (BOUNDARIES & SELF-BITE ACTIVE)'
+                ? 'PHONE JOYSTICK — TAP: 1 PIXEL | HOLD: CONTINUOUS MOVE'
                 : `VIRTUAL GAMEPAD — ${GAMES.find((g) => g.id === activeGame)?.name.toUpperCase()}`}
             </span>
           </div>
           <span className="gamepad-hint-chip">
-            {activeGame === 'snake' ? 'Each button press = exactly 1 pixel move' : 'Touch / Keyboard Controls'}
+            {activeGame === 'snake' ? 'Hold button to move continuously' : 'Touch / Keyboard Controls'}
           </span>
         </div>
 
-        {/* 1. SNAKE GAMEPAD: 4-WAY CROSS D-PAD (EXACTLY 1 PIXEL PER PRESS) */}
+        {/* 1. SNAKE GAMEPAD: 4-WAY CROSS D-PAD WITH CONTINUOUS HOLD */}
         {activeGame === 'snake' && (
-          <div className="dpad-container">
+          <div className="dpad-container" onContextMenu={(e) => e.preventDefault()}>
             <div className="dpad-cross">
               <button
                 type="button"
                 className="dpad-btn dpad-up"
-                onPointerDown={(e) => { e.preventDefault(); handleSinglePixelPress('UP'); }}
-                aria-label="Move Up 1 Pixel"
+                onPointerDown={(e) => {
+                  e.preventDefault();
+                  try { e.currentTarget.setPointerCapture(e.pointerId); } catch (_) {}
+                  startContinuousPress('UP');
+                }}
+                onPointerUp={(e) => {
+                  e.preventDefault();
+                  try { e.currentTarget.releasePointerCapture(e.pointerId); } catch (_) {}
+                  stopContinuousPress('UP');
+                }}
+                onPointerLeave={() => stopContinuousPress('UP')}
+                onPointerCancel={() => stopContinuousPress('UP')}
+                onContextMenu={(e) => e.preventDefault()}
+                aria-label="Move Up"
               >
                 ▲
               </button>
@@ -862,19 +965,43 @@ function GameControl({ onFrameUpdate, onToast }) {
                 <button
                   type="button"
                   className="dpad-btn dpad-left"
-                  onPointerDown={(e) => { e.preventDefault(); handleSinglePixelPress('LEFT'); }}
-                  aria-label="Move Left 1 Pixel"
+                  onPointerDown={(e) => {
+                    e.preventDefault();
+                    try { e.currentTarget.setPointerCapture(e.pointerId); } catch (_) {}
+                    startContinuousPress('LEFT');
+                  }}
+                  onPointerUp={(e) => {
+                    e.preventDefault();
+                    try { e.currentTarget.releasePointerCapture(e.pointerId); } catch (_) {}
+                    stopContinuousPress('LEFT');
+                  }}
+                  onPointerLeave={() => stopContinuousPress('LEFT')}
+                  onPointerCancel={() => stopContinuousPress('LEFT')}
+                  onContextMenu={(e) => e.preventDefault()}
+                  aria-label="Move Left"
                 >
                   ◀
                 </button>
                 <div className="dpad-center-hub">
-                  <span className="dpad-matrix-badge">1-PX</span>
+                  <span className="dpad-matrix-badge">HOLD</span>
                 </div>
                 <button
                   type="button"
                   className="dpad-btn dpad-right"
-                  onPointerDown={(e) => { e.preventDefault(); handleSinglePixelPress('RIGHT'); }}
-                  aria-label="Move Right 1 Pixel"
+                  onPointerDown={(e) => {
+                    e.preventDefault();
+                    try { e.currentTarget.setPointerCapture(e.pointerId); } catch (_) {}
+                    startContinuousPress('RIGHT');
+                  }}
+                  onPointerUp={(e) => {
+                    e.preventDefault();
+                    try { e.currentTarget.releasePointerCapture(e.pointerId); } catch (_) {}
+                    stopContinuousPress('RIGHT');
+                  }}
+                  onPointerLeave={() => stopContinuousPress('RIGHT')}
+                  onPointerCancel={() => stopContinuousPress('RIGHT')}
+                  onContextMenu={(e) => e.preventDefault()}
+                  aria-label="Move Right"
                 >
                   ▶
                 </button>
@@ -882,8 +1009,20 @@ function GameControl({ onFrameUpdate, onToast }) {
               <button
                 type="button"
                 className="dpad-btn dpad-down"
-                onPointerDown={(e) => { e.preventDefault(); handleSinglePixelPress('DOWN'); }}
-                aria-label="Move Down 1 Pixel"
+                onPointerDown={(e) => {
+                  e.preventDefault();
+                  try { e.currentTarget.setPointerCapture(e.pointerId); } catch (_) {}
+                  startContinuousPress('DOWN');
+                }}
+                onPointerUp={(e) => {
+                  e.preventDefault();
+                  try { e.currentTarget.releasePointerCapture(e.pointerId); } catch (_) {}
+                  stopContinuousPress('DOWN');
+                }}
+                onPointerLeave={() => stopContinuousPress('DOWN')}
+                onPointerCancel={() => stopContinuousPress('DOWN')}
+                onContextMenu={(e) => e.preventDefault()}
+                aria-label="Move Down"
               >
                 ▼
               </button>
@@ -977,6 +1116,34 @@ function GameControl({ onFrameUpdate, onToast }) {
             </div>
           </div>
         )}
+      </div>
+
+      {/* Hold Speed Selector */}
+      <div className="game-footer-settings">
+        <span className="footer-label">Continuous Hold Speed:</span>
+        <div className="speed-pills">
+          <button
+            type="button"
+            className={`speed-pill ${speedLevel === 'slow' ? 'active' : ''}`}
+            onClick={() => setSpeedLevel('slow')}
+          >
+            Relaxed (210ms)
+          </button>
+          <button
+            type="button"
+            className={`speed-pill ${speedLevel === 'normal' ? 'active' : ''}`}
+            onClick={() => setSpeedLevel('normal')}
+          >
+            Standard (150ms)
+          </button>
+          <button
+            type="button"
+            className={`speed-pill ${speedLevel === 'fast' ? 'active' : ''}`}
+            onClick={() => setSpeedLevel('fast')}
+          >
+            Turbo (95ms) 🔥
+          </button>
+        </div>
       </div>
     </div>
   );
