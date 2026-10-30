@@ -251,6 +251,9 @@ static const uint8_t fontDigital[] PROGMEM = {
 // Thread-Safe Handoff Variables (Core 0 -> Core 1)
 // -------------------------------------------------------------------------
 volatile bool hasNewCommand = false;
+volatile uint16_t frameCount = 0;
+volatile uint16_t currentFps = 0;
+static uint32_t lastFpsCalcTime = 0;
 static String pendingType = "";
 static String pendingText = "MATRIX STUDIO";
 static String pendingFont = "standard";
@@ -1103,11 +1106,6 @@ void setup() {
     0 // Core 0
   );
 }
-
-// Real-time Hardware FPS Tracker
-volatile uint16_t frameCount = 0;
-volatile uint16_t currentFps = 0;
-uint32_t lastFpsCalcTime = 0;
 
 // =========================================================================
 // Core 1 Main Loop: 100% Dedicated to 60 FPS LED Animations
