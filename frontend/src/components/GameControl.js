@@ -106,6 +106,7 @@ function GameControl({ onFrameUpdate, onToast }) {
     // Snake State
     snake: [{ x: 10, y: 5 }, { x: 9, y: 5 }, { x: 8, y: 5 }],
     snakeDir: 'RIGHT',
+    nextSnakeDir: 'RIGHT',
     snakeFood: { x: 20, y: 5 },
     snakeEatFlash: null,
     isGameOver: false,
@@ -184,9 +185,6 @@ function GameControl({ onFrameUpdate, onToast }) {
       })
       .finally(() => {
         isTransmittingRef.current = false;
-        if (pendingFrameRef.current) {
-          pushFrameToHardware(pendingFrameRef.current);
-        }
       });
   }, [syncToMatrix]);
 
@@ -286,8 +284,10 @@ function GameControl({ onFrameUpdate, onToast }) {
     if (gameId === 'snake') {
       s.snake = [{ x: 10, y: 5 }, { x: 9, y: 5 }, { x: 8, y: 5 }];
       s.snakeDir = 'RIGHT';
+      s.nextSnakeDir = 'RIGHT';
       s.snakeFood = spawnFood(s.snake);
       s.snakeEatFlash = null;
+      s.isGameOver = false;
       setSnakeLength(3);
     } else if (gameId === 'pong') {
       setLives(3);
@@ -361,25 +361,63 @@ function GameControl({ onFrameUpdate, onToast }) {
   };
 
   // =========================================================================
-  // CORE SNAKE CONTROLLER (EXACT 1-PIXEL STEP)
-  // Rule 1: Step 1 pixel in the chosen direction.
-  // Rule 2: Strictly enforced boundaries (0..29, 0..9). Moving beyond ends game.
-  // Rule 3: Mouth touching any body/tail segment ends game.
+  // CORE SNAKE CONTROLLER (ORIGINAL CLASSIC SNAKE MECHANICS)
+  // 1. Moves CONTINUOUSLY pixel-by-pixel on its own loop.
+  // 2. User steers direction via Joystick or Keys (without reversing 180° into body).
+  // 3. Strict 30x10 Boundaries: hitting edge ends game immediately.
+  // 4. Self-Collision: mouth touching body ends game immediately.
   // =========================================================================
-  const stepSnake = (dir) => {
+  const handleSnakeDirectionChange = (newDir) => {
+    sfx.init();
     const s = stateRef.current;
     if (s.isGameOver) return;
 
-    // Advance head coordinates by exactly 1 pixel
+    // First steering input starts the continuous movement from ready state
+    if (gameState === 'ready') {
+      setGameState('playing');
+    }
+
+    const curDir = s.snakeDir;
+    const isOpposite =
+      (curDir === 'UP' && newDir === 'DOWN') ||
+      (curDir === 'DOWN' && newDir === 'UP') ||
+      (curDir === 'LEFT' && newDir === 'RIGHT') ||
+      (curDir === 'RIGHT' && newDir === 'LEFT');
+
+    // Prevent immediate 180° turn into body
+    if (!isOpposite || s.snake.length <= 1) {
+      s.nextSnakeDir = newDir;
+      triggerHaptic(12);
+    }
+  };
+
+  const tickSnake = () => {
+    const s = stateRef.current;
+    if (s.isGameOver) return;
+
+    // Apply buffered direction (prevent 180° suicide)
+    const curDir = s.snakeDir;
+    const nextDir = s.nextSnakeDir || curDir;
+
+    const isOpposite =
+      (curDir === 'UP' && nextDir === 'DOWN') ||
+      (curDir === 'DOWN' && nextDir === 'UP') ||
+      (curDir === 'LEFT' && nextDir === 'RIGHT') ||
+      (curDir === 'RIGHT' && nextDir === 'LEFT');
+
+    const effectiveDir = (isOpposite && s.snake.length > 1) ? curDir : nextDir;
+    s.snakeDir = effectiveDir;
+
+    // Advance head coordinates by EXACTLY 1 pixel
     const head = { ...s.snake[0] };
-    if (dir === 'UP') head.y--;
-    else if (dir === 'DOWN') head.y++;
-    else if (dir === 'LEFT') head.x--;
-    else if (dir === 'RIGHT') head.x++;
+    if (effectiveDir === 'UP') head.y--;
+    else if (effectiveDir === 'DOWN') head.y++;
+    else if (effectiveDir === 'LEFT') head.x--;
+    else if (effectiveDir === 'RIGHT') head.x++;
 
     // -----------------------------------------------------------------------
-    // RULE 2: BOUNDARY CHECK
-    // If snake tries to move beyond the last pixel (0..29, 0..9) -> GAME OVER!
+    // RULE 2: BOUNDARY CHECK (0..29, 0..9)
+    // If snake tries to move beyond the last pixel -> GAME OVER!
     // -----------------------------------------------------------------------
     if (head.x < 0 || head.x >= MATRIX_WIDTH || head.y < 0 || head.y >= MATRIX_HEIGHT) {
       handleGameOver('boundary');
@@ -387,7 +425,7 @@ function GameControl({ onFrameUpdate, onToast }) {
     }
 
     // -----------------------------------------------------------------------
-    // RULE 3: MOUTH TOUCHING TAIL / BODY CHECK
+    // RULE 3: BODY / TAIL COLLISION CHECK
     // If snake mouth (new head position) touches any body or tail segment -> GAME OVER!
     // -----------------------------------------------------------------------
     const isEating = head.x === s.snakeFood.x && head.y === s.snakeFood.y;
@@ -398,9 +436,7 @@ function GameControl({ onFrameUpdate, onToast }) {
       return;
     }
 
-    // Move is legal: apply sound, haptics, direction
-    s.snakeDir = dir;
-    triggerHaptic(16);
+    // Legal move
     sfx.step();
 
     const newSnake = [head, ...s.snake];
@@ -422,53 +458,7 @@ function GameControl({ onFrameUpdate, onToast }) {
     }
 
     s.snake = newSnake;
-
-    // Transition state from ready to playing on first move
-    if (gameState === 'ready') {
-      setGameState('playing');
-    }
-
-    // Render immediately (0ms delay)
     renderCurrentGame('snake');
-  };
-
-  // =========================================================================
-  // CONTINUOUS PRESS CONTROLLER:
-  // - Tap once: moves 1 pixel immediately.
-  // - Continuously hold down: moves continuously pixel-by-pixel!
-  // - Release: stops immediately!
-  // =========================================================================
-  const startContinuousPress = (dir) => {
-    sfx.init();
-    const s = stateRef.current;
-    if (s.isGameOver) return;
-
-    activeDirectionRef.current = dir;
-
-    // 1. Step 1 pixel immediately!
-    stepSnake(dir);
-
-    // 2. Clear any active hold timers
-    if (holdTimerRef.current) clearTimeout(holdTimerRef.current);
-    if (holdIntervalRef.current) clearInterval(holdIntervalRef.current);
-
-    // If game ended on that initial step, don't schedule repeat
-    if (s.isGameOver) return;
-
-    // 3. If continuously held down for >200ms, continue moving pixel-by-pixel!
-    const repeatSpeed = getHoldSpeedMs();
-    holdTimerRef.current = setTimeout(() => {
-      if (s.isGameOver) return;
-      holdIntervalRef.current = setInterval(() => {
-        if (s.isGameOver) {
-          stopContinuousPress();
-          return;
-        }
-        if (activeDirectionRef.current) {
-          stepSnake(activeDirectionRef.current);
-        }
-      }, repeatSpeed);
-    }, 200);
   };
 
   // Other Game Loops (Pong, Defender, Breaker)
@@ -638,12 +628,23 @@ function GameControl({ onFrameUpdate, onToast }) {
     renderCurrentGame('breaker');
   };
 
-  // Interval Manager for Real-Time arcade games (Pong, Defender, Breaker)
+  // Interval Manager for Real-Time arcade games (Snake, Pong, Defender, Breaker)
   useEffect(() => {
-    if (activeGame !== 'snake' && gameState === 'playing') {
-      const ms = activeGame === 'pong' ? 85 : activeGame === 'defender' ? 70 : 80;
+    if (gameState === 'playing') {
+      let ms;
+      if (activeGame === 'snake') {
+        ms = speedLevel === 'slow' ? 220 : speedLevel === 'fast' ? 120 : 170;
+      } else if (activeGame === 'pong') {
+        ms = 85;
+      } else if (activeGame === 'defender') {
+        ms = 70;
+      } else if (activeGame === 'breaker') {
+        ms = 80;
+      }
+
       gameLoopRef.current = setInterval(() => {
-        if (activeGame === 'pong') tickPong();
+        if (activeGame === 'snake') tickSnake();
+        else if (activeGame === 'pong') tickPong();
         else if (activeGame === 'defender') tickDefender();
         else if (activeGame === 'breaker') tickBreaker();
       }, ms);
@@ -654,7 +655,7 @@ function GameControl({ onFrameUpdate, onToast }) {
     return () => {
       if (gameLoopRef.current) clearInterval(gameLoopRef.current);
     };
-  }, [gameState, activeGame]);
+  }, [gameState, activeGame, speedLevel]);
 
   const startGame = () => {
     sfx.init();
@@ -718,25 +719,26 @@ function GameControl({ onFrameUpdate, onToast }) {
     renderCurrentGame('breaker');
   };
 
-  // Keyboard Event Listeners with continuous hold support
+  // Keyboard Event Listeners for Direction Steering
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (activeGame === 'snake') {
         if (e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W') {
           e.preventDefault();
-          if (!e.repeat) startContinuousPress('UP');
+          handleSnakeDirectionChange('UP');
         } else if (e.key === 'ArrowDown' || e.key === 's' || e.key === 'S') {
           e.preventDefault();
-          if (!e.repeat) startContinuousPress('DOWN');
+          handleSnakeDirectionChange('DOWN');
         } else if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') {
           e.preventDefault();
-          if (!e.repeat) startContinuousPress('LEFT');
+          handleSnakeDirectionChange('LEFT');
         } else if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') {
           e.preventDefault();
-          if (!e.repeat) startContinuousPress('RIGHT');
+          handleSnakeDirectionChange('RIGHT');
         } else if (e.code === 'Space') {
           e.preventDefault();
-          resetGame();
+          if (gameState === 'playing') pauseGame();
+          else startGame();
         }
       } else {
         if (gameState !== 'playing') {
@@ -757,23 +759,11 @@ function GameControl({ onFrameUpdate, onToast }) {
       }
     };
 
-    const handleKeyUp = (e) => {
-      if (activeGame === 'snake') {
-        if (e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W') stopContinuousPress('UP');
-        else if (e.key === 'ArrowDown' || e.key === 's' || e.key === 'S') stopContinuousPress('DOWN');
-        else if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') stopContinuousPress('LEFT');
-        else if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') stopContinuousPress('RIGHT');
-      }
-    };
-
     window.addEventListener('keydown', handleKeyDown);
-    window.addEventListener('keyup', handleKeyUp);
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
-      window.removeEventListener('keyup', handleKeyUp);
-      stopContinuousPress();
     };
-  }, [gameState, activeGame, stopContinuousPress]);
+  }, [gameState, activeGame]);
 
   return (
     <div className="panel-card games-section-container">
@@ -816,6 +806,36 @@ function GameControl({ onFrameUpdate, onToast }) {
               </div>
 
               <div className="hud-metric-box">
+                <span className="hud-metric-label">SPEED</span>
+                <div className="speed-pill-group">
+                  <button
+                    type="button"
+                    className={`speed-pill-btn ${speedLevel === 'slow' ? 'active' : ''}`}
+                    onClick={() => setSpeedLevel('slow')}
+                    title="Slow Speed (0.7x)"
+                  >
+                    🐢
+                  </button>
+                  <button
+                    type="button"
+                    className={`speed-pill-btn ${speedLevel === 'normal' ? 'active' : ''}`}
+                    onClick={() => setSpeedLevel('normal')}
+                    title="Normal Speed (1.0x)"
+                  >
+                    🟢
+                  </button>
+                  <button
+                    type="button"
+                    className={`speed-pill-btn ${speedLevel === 'fast' ? 'active' : ''}`}
+                    onClick={() => setSpeedLevel('fast')}
+                    title="Fast Speed (1.4x)"
+                  >
+                    ⚡
+                  </button>
+                </div>
+              </div>
+
+              <div className="hud-metric-box">
                 <span className="hud-metric-label">BOUNDARIES</span>
                 <span className="hud-metric-val" style={{ fontSize: '0.85rem', color: '#ffaa00' }}>
                   🧱 30×10 SOLID
@@ -836,32 +856,30 @@ function GameControl({ onFrameUpdate, onToast }) {
 
         {/* Action Controls */}
         <div className="game-hud-actions">
-          {activeGame !== 'snake' ? (
-            gameState !== 'playing' ? (
-              <button
-                type="button"
-                className="game-action-btn primary pulse-glow"
-                onClick={startGame}
-              >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-                  <polygon points="5 3 19 12 5 21 5 3" />
-                </svg>
-                <span>{gameState === 'paused' ? 'RESUME' : 'START'}</span>
-              </button>
-            ) : (
-              <button
-                type="button"
-                className="game-action-btn warning"
-                onClick={pauseGame}
-              >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-                  <rect x="6" y="4" width="4" height="16" />
-                  <rect x="14" y="4" width="4" height="16" />
-                </svg>
-                <span>PAUSE</span>
-              </button>
-            )
-          ) : null}
+          {gameState !== 'playing' ? (
+            <button
+              type="button"
+              className="game-action-btn primary pulse-glow"
+              onClick={startGame}
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                <polygon points="5 3 19 12 5 21 5 3" />
+              </svg>
+              <span>{gameState === 'paused' ? 'RESUME' : 'START'}</span>
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="game-action-btn warning"
+              onClick={pauseGame}
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                <rect x="6" y="4" width="4" height="16" />
+                <rect x="14" y="4" width="4" height="16" />
+              </svg>
+              <span>PAUSE</span>
+            </button>
+          )}
 
           <button
             type="button"
@@ -937,7 +955,7 @@ function GameControl({ onFrameUpdate, onToast }) {
           </span>
         </div>
 
-        {/* 1. SNAKE GAMEPAD: 4-WAY CROSS D-PAD WITH CONTINUOUS HOLD */}
+        {/* 1. SNAKE GAMEPAD: 4-WAY CROSS D-PAD STEERING */}
         {activeGame === 'snake' && (
           <div className="dpad-container" onContextMenu={(e) => e.preventDefault()}>
             <div className="dpad-cross">
@@ -946,18 +964,10 @@ function GameControl({ onFrameUpdate, onToast }) {
                 className="dpad-btn dpad-up"
                 onPointerDown={(e) => {
                   e.preventDefault();
-                  try { e.currentTarget.setPointerCapture(e.pointerId); } catch (_) {}
-                  startContinuousPress('UP');
+                  handleSnakeDirectionChange('UP');
                 }}
-                onPointerUp={(e) => {
-                  e.preventDefault();
-                  try { e.currentTarget.releasePointerCapture(e.pointerId); } catch (_) {}
-                  stopContinuousPress('UP');
-                }}
-                onPointerLeave={() => stopContinuousPress('UP')}
-                onPointerCancel={() => stopContinuousPress('UP')}
                 onContextMenu={(e) => e.preventDefault()}
-                aria-label="Move Up"
+                aria-label="Steer Up"
               >
                 ▲
               </button>
@@ -967,41 +977,25 @@ function GameControl({ onFrameUpdate, onToast }) {
                   className="dpad-btn dpad-left"
                   onPointerDown={(e) => {
                     e.preventDefault();
-                    try { e.currentTarget.setPointerCapture(e.pointerId); } catch (_) {}
-                    startContinuousPress('LEFT');
+                    handleSnakeDirectionChange('LEFT');
                   }}
-                  onPointerUp={(e) => {
-                    e.preventDefault();
-                    try { e.currentTarget.releasePointerCapture(e.pointerId); } catch (_) {}
-                    stopContinuousPress('LEFT');
-                  }}
-                  onPointerLeave={() => stopContinuousPress('LEFT')}
-                  onPointerCancel={() => stopContinuousPress('LEFT')}
                   onContextMenu={(e) => e.preventDefault()}
-                  aria-label="Move Left"
+                  aria-label="Steer Left"
                 >
                   ◀
                 </button>
                 <div className="dpad-center-hub">
-                  <span className="dpad-matrix-badge">HOLD</span>
+                  <span className="dpad-matrix-badge">STEER</span>
                 </div>
                 <button
                   type="button"
                   className="dpad-btn dpad-right"
                   onPointerDown={(e) => {
                     e.preventDefault();
-                    try { e.currentTarget.setPointerCapture(e.pointerId); } catch (_) {}
-                    startContinuousPress('RIGHT');
+                    handleSnakeDirectionChange('RIGHT');
                   }}
-                  onPointerUp={(e) => {
-                    e.preventDefault();
-                    try { e.currentTarget.releasePointerCapture(e.pointerId); } catch (_) {}
-                    stopContinuousPress('RIGHT');
-                  }}
-                  onPointerLeave={() => stopContinuousPress('RIGHT')}
-                  onPointerCancel={() => stopContinuousPress('RIGHT')}
                   onContextMenu={(e) => e.preventDefault()}
-                  aria-label="Move Right"
+                  aria-label="Steer Right"
                 >
                   ▶
                 </button>
@@ -1011,18 +1005,10 @@ function GameControl({ onFrameUpdate, onToast }) {
                 className="dpad-btn dpad-down"
                 onPointerDown={(e) => {
                   e.preventDefault();
-                  try { e.currentTarget.setPointerCapture(e.pointerId); } catch (_) {}
-                  startContinuousPress('DOWN');
+                  handleSnakeDirectionChange('DOWN');
                 }}
-                onPointerUp={(e) => {
-                  e.preventDefault();
-                  try { e.currentTarget.releasePointerCapture(e.pointerId); } catch (_) {}
-                  stopContinuousPress('DOWN');
-                }}
-                onPointerLeave={() => stopContinuousPress('DOWN')}
-                onPointerCancel={() => stopContinuousPress('DOWN')}
                 onContextMenu={(e) => e.preventDefault()}
-                aria-label="Move Down"
+                aria-label="Steer Down"
               >
                 ▼
               </button>

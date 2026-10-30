@@ -1571,4 +1571,35 @@ html, body {
   letter-spacing: 0.05em;
 }
 
+/* Speed Pill Selector */
+.speed-pill-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(10, 16, 28, 0.7);
+  padding: 3px 6px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.speed-pill-btn {
+  background: transparent;
+  border: none;
+  font-size: 0.85rem;
+  padding: 2px 6px;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  line-height: 1.2;
+}
+
+.speed-pill-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.speed-pill-btn.active {
+  background: rgba(0, 240, 255, 0.25);
+  box-shadow: 0 0 8px rgba(0, 240, 255, 0.4);
+}
+
 

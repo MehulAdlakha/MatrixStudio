@@ -23,10 +23,17 @@
 const char* WIFI_SSID     = "vision";
 const char* WIFI_PASSWORD = "987654321";
 
-const char* BACKEND_BASE_URL = "https://matrixstudio.onrender.com";
-const char* ENDPOINT_POLL    = "https://matrixstudio.onrender.com/api/device/poll";
-const char* ENDPOINT_ACK     = "https://matrixstudio.onrender.com/api/device/ack";
-const char* ENDPOINT_STATUS  = "https://matrixstudio.onrender.com/api/device/status";
+// [OPTION 1 - RECOMMENDED]: ZERO-LATENCY LOCAL WI-FI (Sub-50ms response for real-time gaming)
+const char* BACKEND_BASE_URL = "http://172.22.211.5:5000";
+const char* ENDPOINT_POLL    = "http://172.22.211.5:5000/api/device/poll";
+const char* ENDPOINT_ACK     = "http://172.22.211.5:5000/api/device/ack";
+const char* ENDPOINT_STATUS  = "http://172.22.211.5:5000/api/device/status";
+
+// [OPTION 2 - FALLBACK]: CLOUD HTTPS (Uncomment if controlling remotely over public internet)
+// const char* BACKEND_BASE_URL = "https://matrixstudio.onrender.com";
+// const char* ENDPOINT_POLL    = "https://matrixstudio.onrender.com/api/device/poll";
+// const char* ENDPOINT_ACK     = "https://matrixstudio.onrender.com/api/device/ack";
+// const char* ENDPOINT_STATUS  = "https://matrixstudio.onrender.com/api/device/status";
 
 // =========================================================================
 // Hardware Configuration: DOIT ESP32 DevKit V1 (30-pin & 36-pin)
@@ -889,7 +896,8 @@ void networkWorker(void* param) {
     }
 
     // Dynamic Gaming Poll Rate: Accelerates during active gameplay stream!
-    uint32_t activeInterval = (millis() < turboUntil) ? (isHttps ? 500 : 180) : basePollInterval;
+    // Local HTTP: 45ms (~22 FPS Zero-Lag) | Cloud HTTPS: 400ms
+    uint32_t activeInterval = (millis() < turboUntil) ? (isHttps ? 400 : 45) : basePollInterval;
 
     // Unified poll: fetches command + reports heartbeat + auto-acks lastId in ONE request!
     if (now - lastPollTime >= activeInterval) {
@@ -915,14 +923,14 @@ void networkWorker(void* param) {
         // FAST PATH: If no new command, exit immediately without ANY heap allocation!
         if (body.indexOf("\"hasCommand\":true") == -1) {
           http.end();
-          vTaskDelay(pdMS_TO_TICKS(50));
+          vTaskDelay(pdMS_TO_TICKS(millis() < turboUntil ? 10 : 50));
           continue;
         }
 
         // SLOW PATH: New command arrived! Allocate 6KB only for image pixel arrays, else 2KB
         bool isImage = (body.indexOf("\"image\"") != -1);
         if (isImage) {
-          turboUntil = millis() + 15000; // Boost polling speed for 15s during active gameplay!
+          turboUntil = millis() + 30000; // Boost polling speed for 30s during active gameplay!
         }
         DynamicJsonDocument doc(isImage ? 6144 : 2048);
         DeserializationError err = deserializeJson(doc, body);
