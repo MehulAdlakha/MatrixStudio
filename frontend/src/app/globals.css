@@ -910,3 +910,619 @@ html, body {
   gap: 10px;
   margin-top: 20px;
 }
+
+/* =========================================================================
+   Retro Games & Phone Gamepad Architecture
+   ========================================================================= */
+.games-section-container {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-neon);
+  box-shadow: var(--shadow-card), 0 0 30px rgba(0, 240, 255, 0.08);
+  position: relative;
+  overflow: hidden;
+}
+
+/* Game Selection Ribbon */
+.game-tabs-selector {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+}
+
+@media (max-width: 640px) {
+  .game-tabs-selector {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.game-select-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: rgba(12, 16, 27, 0.8);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.game-select-card:hover {
+  background: rgba(20, 28, 48, 0.9);
+  border-color: rgba(0, 240, 255, 0.3);
+  transform: translateY(-2px);
+}
+
+.game-select-card.active {
+  background: linear-gradient(135deg, rgba(0, 240, 255, 0.18), rgba(255, 0, 127, 0.12));
+  border-color: var(--neon-cyan);
+  box-shadow: 0 4px 18px rgba(0, 240, 255, 0.25);
+}
+
+.game-select-icon {
+  font-size: 1.8rem;
+  line-height: 1;
+}
+
+.game-select-info {
+  display: flex;
+  flex-direction: column;
+}
+
+.game-select-name {
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: #fff;
+}
+
+.game-select-tag {
+  font-size: 0.72rem;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+}
+
+/* HUD / Telemetry Bar */
+.game-hud-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+  background: rgba(4, 7, 14, 0.85);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 14px 18px;
+}
+
+.game-hud-metrics {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  flex-wrap: wrap;
+}
+
+.hud-metric-box {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.hud-metric-label {
+  font-size: 0.7rem;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+}
+
+.hud-metric-val {
+  font-size: 1.35rem;
+  font-weight: 800;
+  font-family: var(--font-mono);
+  line-height: 1.1;
+}
+
+.neon-cyan-text {
+  color: var(--neon-cyan);
+  text-shadow: 0 0 10px rgba(0, 240, 255, 0.5);
+}
+
+.neon-pink-text {
+  color: var(--neon-pink);
+  text-shadow: 0 0 10px rgba(255, 0, 127, 0.5);
+}
+
+.neon-green-text {
+  color: var(--neon-green);
+  text-shadow: 0 0 10px rgba(0, 255, 136, 0.5);
+}
+
+.game-hud-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.game-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 18px;
+  border-radius: var(--radius-sm);
+  font-size: 0.88rem;
+  font-weight: 700;
+  cursor: pointer;
+  border: none;
+  transition: all 0.2s ease;
+  font-family: var(--font-sans);
+}
+
+.game-action-btn.primary {
+  background: linear-gradient(135deg, #00f0ff, #00a6ff);
+  color: #030812;
+  box-shadow: 0 2px 14px rgba(0, 240, 255, 0.4);
+}
+.game-action-btn.primary:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 20px rgba(0, 240, 255, 0.6);
+}
+
+.game-action-btn.warning {
+  background: linear-gradient(135deg, #ffaa00, #ff7700);
+  color: #030812;
+  box-shadow: 0 2px 14px rgba(255, 170, 0, 0.35);
+}
+
+.game-action-btn.secondary {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-main);
+  border: 1px solid var(--border-subtle);
+}
+.game-action-btn.secondary:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+/* Hardware Sync & Audio Strip */
+.game-hardware-strip {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 10px 14px;
+  background: rgba(0, 0, 0, 0.35);
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.toggle-switch-wrapper {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.toggle-switch-wrapper input {
+  display: none;
+}
+
+.toggle-slider {
+  width: 40px;
+  height: 22px;
+  background: #1c2333;
+  border-radius: 20px;
+  position: relative;
+  transition: background 0.25s ease;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.toggle-slider::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  background: #fff;
+  border-radius: 50%;
+  transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.toggle-switch-wrapper input:checked + .toggle-slider {
+  background: var(--neon-cyan);
+  box-shadow: 0 0 10px var(--neon-cyan-glow);
+}
+
+.toggle-switch-wrapper input:checked + .toggle-slider::after {
+  transform: translateX(18px);
+  background: #030812;
+}
+
+.toggle-label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.hardware-stream-badge {
+  font-size: 0.78rem;
+  font-family: var(--font-mono);
+}
+
+.stream-online {
+  color: var(--neon-green);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.stream-paused {
+  color: var(--text-dim);
+}
+
+.sound-toggle-btn {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.sound-toggle-btn.active {
+  background: rgba(0, 240, 255, 0.12);
+  border-color: rgba(0, 240, 255, 0.35);
+  color: var(--neon-cyan);
+}
+
+/* =========================================================================
+   VIRTUAL PHONE GAMEPAD CONSOLE
+   Custom tactile touch controls designed specifically for mobile ergonomics
+   ========================================================================= */
+.gamepad-chassis {
+  background: radial-gradient(circle at 50% 30%, #111726 0%, #060910 100%);
+  border: 2px solid #1c273e;
+  border-radius: 20px;
+  padding: 24px 20px;
+  box-shadow: inset 0 2px 10px rgba(255, 255, 255, 0.06), 0 12px 36px rgba(0, 0, 0, 0.8);
+  user-select: none;
+  -webkit-touch-callout: none;
+  touch-action: manipulation;
+}
+
+.gamepad-header-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 22px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  padding-bottom: 10px;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.gamepad-brand-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.82rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+.gamepad-dpad-icon {
+  font-size: 1.1rem;
+}
+
+.gamepad-hint-chip {
+  font-size: 0.72rem;
+  font-family: var(--font-mono);
+  color: var(--neon-cyan);
+  background: rgba(0, 240, 255, 0.08);
+  padding: 3px 8px;
+  border-radius: 4px;
+  border: 1px solid rgba(0, 240, 255, 0.15);
+}
+
+/* 1. SNAKE: 4-WAY CROSS D-PAD */
+.dpad-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 10px 0 20px 0;
+}
+
+.dpad-cross {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.dpad-row-middle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dpad-center-hub {
+  width: 58px;
+  height: 58px;
+  background: #141b2b;
+  border-radius: 10px;
+  box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.8);
+}
+
+.dpad-btn {
+  width: 72px;
+  height: 64px;
+  background: linear-gradient(180deg, #222d44 0%, #141b2c 100%);
+  border: 2px solid #2d3b59;
+  border-radius: 12px;
+  color: #c7d5ee;
+  font-size: 1.5rem;
+  font-weight: 900;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.6), inset 0 1px 2px rgba(255, 255, 255, 0.15);
+  transition: all 0.08s ease;
+  touch-action: manipulation;
+}
+
+.dpad-btn:active {
+  transform: scale(0.94);
+  background: linear-gradient(180deg, #00f0ff 0%, #0088cc 100%);
+  color: #030812;
+  border-color: var(--neon-cyan);
+  box-shadow: 0 0 20px rgba(0, 240, 255, 0.6);
+}
+
+/* 2. PONG: VERTICAL PADDLE GAMEPAD */
+.vertical-paddle-gamepad {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 0;
+}
+
+.paddle-instruction {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+.paddle-dual-buttons {
+  display: flex;
+  gap: 18px;
+  width: 100%;
+  max-width: 500px;
+}
+
+@media (max-width: 600px) {
+  .paddle-dual-buttons {
+    flex-direction: column;
+  }
+}
+
+.arcade-large-btn {
+  flex: 1;
+  min-height: 85px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: 14px;
+  cursor: pointer;
+  border: 2px solid;
+  transition: all 0.08s ease;
+  touch-action: manipulation;
+}
+
+.arcade-large-btn.cyan-btn {
+  background: linear-gradient(180deg, #102538 0%, #091522 100%);
+  border-color: rgba(0, 240, 255, 0.4);
+  color: var(--neon-cyan);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.6);
+}
+
+.arcade-large-btn.cyan-btn:active {
+  transform: scale(0.96);
+  background: linear-gradient(180deg, #00f0ff 0%, #0099cc 100%);
+  color: #030812;
+  box-shadow: 0 0 24px rgba(0, 240, 255, 0.7);
+}
+
+.arcade-large-btn.pink-btn {
+  background: linear-gradient(180deg, #331024 0%, #1e0915 100%);
+  border-color: rgba(255, 0, 127, 0.4);
+  color: var(--neon-pink);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.6);
+}
+
+.arcade-large-btn.pink-btn:active {
+  transform: scale(0.96);
+  background: linear-gradient(180deg, #ff007f 0%, #aa0055 100%);
+  color: #fff;
+  box-shadow: 0 0 24px rgba(255, 0, 127, 0.7);
+}
+
+.arcade-btn-arrow {
+  font-size: 1.6rem;
+  font-weight: 900;
+}
+
+.arcade-btn-title {
+  font-size: 0.88rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+}
+
+/* 3. GALAXY DEFENDER: DUAL-HAND COMBAT CONTROLLER */
+.dual-hand-controller {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+  align-items: center;
+  padding: 10px 0;
+}
+
+@media (max-width: 540px) {
+  .dual-hand-controller {
+    grid-template-columns: 1fr;
+  }
+}
+
+.hand-cluster {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.cluster-label {
+  font-size: 0.72rem;
+  font-weight: 800;
+  font-family: var(--font-mono);
+  color: var(--text-dim);
+  letter-spacing: 0.1em;
+}
+
+.thrust-button-pair {
+  display: flex;
+  gap: 12px;
+  width: 100%;
+}
+
+.arcade-square-btn {
+  flex: 1;
+  height: 75px;
+  background: linear-gradient(180deg, #1b2438 0%, #0e1422 100%);
+  border: 2px solid #2d3b59;
+  border-radius: 12px;
+  color: #c7d5ee;
+  font-size: 0.95rem;
+  font-weight: 800;
+  cursor: pointer;
+  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.6);
+  transition: all 0.08s ease;
+  touch-action: manipulation;
+}
+
+.arcade-square-btn:active {
+  transform: scale(0.95);
+  background: var(--neon-cyan);
+  color: #030812;
+  border-color: var(--neon-cyan);
+  box-shadow: 0 0 20px rgba(0, 240, 255, 0.6);
+}
+
+.arcade-fire-btn {
+  width: 100%;
+  height: 75px;
+  background: linear-gradient(180deg, #ff1a53 0%, #aa002a 100%);
+  border: 2px solid #ff4d79;
+  border-radius: 14px;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  cursor: pointer;
+  box-shadow: 0 6px 20px rgba(255, 26, 83, 0.45), inset 0 2px 4px rgba(255, 255, 255, 0.3);
+  transition: all 0.08s ease;
+  touch-action: manipulation;
+}
+
+.arcade-fire-btn:active {
+  transform: scale(0.95);
+  background: #ff0044;
+  box-shadow: 0 0 30px rgba(255, 0, 68, 0.85);
+}
+
+.fire-icon {
+  font-size: 1.4rem;
+}
+
+.fire-label {
+  font-size: 1.05rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+}
+
+/* 4. BRICK BREAKER: HORIZONTAL STEERING */
+.breaker-horizontal-gamepad {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 0;
+}
+
+.breaker-steering-pair {
+  display: flex;
+  gap: 18px;
+  width: 100%;
+  max-width: 500px;
+}
+
+/* Footer Speed Settings */
+.game-footer-settings {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.footer-label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+
+.speed-pills {
+  display: flex;
+  gap: 6px;
+  background: rgba(0, 0, 0, 0.3);
+  padding: 4px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+}
+
+.speed-pill {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 0.76rem;
+  font-weight: 700;
+  padding: 5px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.speed-pill:hover {
+  color: #fff;
+}
+
+.speed-pill.active {
+  background: rgba(0, 240, 255, 0.2);
+  color: var(--neon-cyan);
+  border: 1px solid rgba(0, 240, 255, 0.3);
+}
+

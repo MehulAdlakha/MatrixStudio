@@ -7,6 +7,7 @@ import MatrixPreview from '../components/MatrixPreview';
 import TextControl from '../components/TextControl';
 import PixelCanvas from '../components/PixelCanvas';
 import AnimationControl from '../components/AnimationControl';
+import GameControl from '../components/GameControl';
 import BrightnessControl from '../components/BrightnessControl';
 import CommandHistory from '../components/CommandHistory';
 import Toast from '../components/Toast';
@@ -139,6 +140,22 @@ export default function MatrixStudioPage() {
               </svg>
               <span>Built-in Animations</span>
             </button>
+
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeTab === 'games'}
+              className={`tab-btn ${activeTab === 'games' ? 'active' : ''}`}
+              onClick={() => setActiveTab('games')}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <rect x="2" y="6" width="20" height="12" rx="3" />
+                <path d="M6 12h4m-2-2v4" />
+                <circle cx="15" cy="11" r="1" fill="currentColor" />
+                <circle cx="18" cy="13" r="1" fill="currentColor" />
+              </svg>
+              <span>Retro Games 🎮</span>
+            </button>
           </div>
 
           {/* Active Tab Content */}
@@ -156,6 +173,13 @@ export default function MatrixStudioPage() {
 
           {activeTab === 'animation' && (
             <AnimationControl onToast={addToast} />
+          )}
+
+          {activeTab === 'games' && (
+            <GameControl
+              onFrameUpdate={setPreviewPixels}
+              onToast={addToast}
+            />
           )}
         </div>
 
