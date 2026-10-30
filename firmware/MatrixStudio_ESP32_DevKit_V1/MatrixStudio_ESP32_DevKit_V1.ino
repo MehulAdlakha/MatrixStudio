@@ -873,9 +873,10 @@ void networkWorker(void* param) {
   http.setReuse(true); // HTTP Keep-Alive
 
   uint32_t lastPollTime = 0;
+  uint32_t turboUntil = 0;
   bool isHttps = String(ENDPOINT_POLL).startsWith("https://");
-  uint32_t pollInterval = isHttps ? 2500 : 1000;
-  uint16_t reqTimeout = isHttps ? 5000 : 1500;
+  uint32_t basePollInterval = isHttps ? 2500 : 1000;
+  uint16_t reqTimeout = isHttps ? 4000 : 1200;
 
   while (true) {
     uint32_t now = millis();
@@ -887,8 +888,11 @@ void networkWorker(void* param) {
       continue;
     }
 
+    // Dynamic Gaming Poll Rate: Accelerates during active gameplay stream!
+    uint32_t activeInterval = (millis() < turboUntil) ? (isHttps ? 500 : 180) : basePollInterval;
+
     // Unified poll: fetches command + reports heartbeat + auto-acks lastId in ONE request!
-    if (now - lastPollTime >= pollInterval) {
+    if (now - lastPollTime >= activeInterval) {
       lastPollTime = now;
 
       String url = String(ENDPOINT_POLL) + 
@@ -917,6 +921,9 @@ void networkWorker(void* param) {
 
         // SLOW PATH: New command arrived! Allocate 6KB only for image pixel arrays, else 2KB
         bool isImage = (body.indexOf("\"image\"") != -1);
+        if (isImage) {
+          turboUntil = millis() + 15000; // Boost polling speed for 15s during active gameplay!
+        }
         DynamicJsonDocument doc(isImage ? 6144 : 2048);
         DeserializationError err = deserializeJson(doc, body);
 
