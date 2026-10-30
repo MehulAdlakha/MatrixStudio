@@ -1,11 +1,12 @@
 'use client';
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, memo } from 'react';
 import { MATRIX_WIDTH, MATRIX_HEIGHT, TOTAL_LEDS, createEmptyGrid } from '../lib/imageProcessor';
 import { sendCommand } from '../lib/api';
 
 // =========================================================================
 // Retro Sound Synthesizer (Native Web Audio API - Zero External Assets)
+// Optimized for zero audio thread lockup on mobile devices
 // =========================================================================
 class SoundFX {
   constructor() {
@@ -34,7 +35,7 @@ class SoundFX {
       const gain = this.ctx.createGain();
       osc.type = type;
       osc.frequency.setValueAtTime(freq, this.ctx.currentTime);
-      gain.gain.setValueAtTime(0.12, this.ctx.currentTime);
+      gain.gain.setValueAtTime(0.1, this.ctx.currentTime);
       gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + duration);
       osc.connect(gain);
       gain.connect(this.ctx.destination);
@@ -45,17 +46,13 @@ class SoundFX {
     }
   }
 
-  move() {
-    this.playTone(320, 0.04, 'triangle');
-  }
-
   score() {
     this.playTone(587, 0.06, 'square');
     setTimeout(() => this.playTone(880, 0.1, 'square'), 60);
   }
 
   fire() {
-    this.playTone(800, 0.05, 'sawtooth');
+    this.playTone(750, 0.04, 'sawtooth');
   }
 
   hit() {
@@ -63,16 +60,16 @@ class SoundFX {
   }
 
   gameOver() {
-    this.playTone(300, 0.15, 'sawtooth');
-    setTimeout(() => this.playTone(220, 0.2, 'sawtooth'), 120);
-    setTimeout(() => this.playTone(150, 0.35, 'sawtooth'), 280);
+    this.playTone(300, 0.12, 'sawtooth');
+    setTimeout(() => this.playTone(220, 0.15, 'sawtooth'), 100);
+    setTimeout(() => this.playTone(150, 0.3, 'sawtooth'), 220);
   }
 }
 
 const sfx = new SoundFX();
 
 // =========================================================================
-// Game Definitions & Palette Tokens
+// Game Definitions & Metadata
 // =========================================================================
 const GAMES = [
   { id: 'snake', name: 'Cyber Snake', icon: '🐍', tag: 'Classic Arcade' },
@@ -81,7 +78,7 @@ const GAMES = [
   { id: 'breaker', name: 'Brick Breaker', icon: '🧱', tag: 'Retro Breakout' }
 ];
 
-export default function GameControl({ onFrameUpdate, onToast }) {
+function GameControl({ onFrameUpdate, onToast }) {
   const [activeGame, setActiveGame] = useState('snake');
   const [gameState, setGameState] = useState('ready'); // 'ready' | 'playing' | 'paused' | 'gameover'
   const [score, setScore] = useState(0);
@@ -90,15 +87,16 @@ export default function GameControl({ onFrameUpdate, onToast }) {
   const [speedLevel, setSpeedLevel] = useState('normal'); // 'slow' | 'normal' | 'fast'
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [syncToMatrix, setSyncToMatrix] = useState(true);
-  const [transmittingFps, setTransmittingFps] = useState(0);
+  const [matrixStatus, setMatrixStatus] = useState('Ready');
 
   // References for game loop & hardware transmission
   const gameLoopRef = useRef(null);
   const isTransmittingRef = useRef(false);
-  const pendingMatrixFrameRef = useRef(null);
-  const fpsCounterRef = useRef({ count: 0, lastCheck: Date.now() });
+  const lastTransmitTimeRef = useRef(0);
+  const networkBackoffUntilRef = useRef(0);
+  const pendingFrameRef = useRef(null);
 
-  // Game internal mutable state
+  // Game internal mutable state (prevents React re-renders on every game tick)
   const stateRef = useRef({
     // Snake
     snake: [{ x: 12, y: 5 }, { x: 11, y: 5 }, { x: 10, y: 5 }],
@@ -124,7 +122,7 @@ export default function GameControl({ onFrameUpdate, onToast }) {
     breakBricks: []
   });
 
-  // Load High Score for current game
+  // Load High Score
   useEffect(() => {
     try {
       const stored = localStorage.getItem(`matrix_highscore_${activeGame}`);
@@ -144,79 +142,72 @@ export default function GameControl({ onFrameUpdate, onToast }) {
     });
   }, [activeGame]);
 
-  // Haptic Feedback for mobile touch
-  const triggerHaptic = (ms = 25) => {
+  // Gentle Haptic Feedback
+  const triggerHaptic = (ms = 18) => {
     if (typeof window !== 'undefined' && 'navigator' in window && navigator.vibrate) {
       try { navigator.vibrate(ms); } catch (e) {}
     }
   };
 
   // =========================================================================
-  // Non-Blocking Hardware Frame Transmitter
-  // Transmits frames to ESP32 without accumulating network backlog
+  // Non-Blocking Decoupled Hardware Matrix Transmitter
+  // Rate-limited to max 2.5 FPS (every 400ms) to match ESP32 polling rate.
+  // The local game loop NEVER waits for or gets blocked by network I/O.
   // =========================================================================
   const pushFrameToHardware = useCallback((pixels) => {
     if (!syncToMatrix) return;
-    pendingMatrixFrameRef.current = pixels;
+    pendingFrameRef.current = pixels;
 
-    if (!isTransmittingRef.current) {
-      transmitNextFrame();
-    }
-  }, [syncToMatrix]);
+    const now = Date.now();
+    // Enforce minimum 380ms spacing between network calls and respect backoff
+    if (now < networkBackoffUntilRef.current) return;
+    if (now - lastTransmitTimeRef.current < 380) return;
+    if (isTransmittingRef.current) return;
 
-  const transmitNextFrame = async () => {
-    if (!pendingMatrixFrameRef.current) return;
-    const frameToSend = pendingMatrixFrameRef.current;
-    pendingMatrixFrameRef.current = null;
+    lastTransmitTimeRef.current = now;
     isTransmittingRef.current = true;
 
-    try {
-      await sendCommand('image', { pixels: frameToSend });
-
-      // Calculate sent FPS
-      fpsCounterRef.current.count++;
-      const now = Date.now();
-      if (now - fpsCounterRef.current.lastCheck >= 1000) {
-        setTransmittingFps(fpsCounterRef.current.count);
-        fpsCounterRef.current.count = 0;
-        fpsCounterRef.current.lastCheck = now;
-      }
-    } catch (err) {
-      // Hardware might be offline or polling, suppress continuous alert
-    } finally {
-      isTransmittingRef.current = false;
-      if (pendingMatrixFrameRef.current) {
-        // More frames waiting, send immediately
-        setTimeout(transmitNextFrame, 40);
-      }
-    }
-  };
+    // Send asynchronously in background without awaiting in the game loop
+    const frameData = pendingFrameRef.current;
+    sendCommand('image', { pixels: frameData }, { timeoutMs: 1800 })
+      .then(() => {
+        setMatrixStatus('Synced 🟢');
+      })
+      .catch((err) => {
+        // If network times out or drops, back off for 2.5 seconds to protect phone CPU/network
+        networkBackoffUntilRef.current = Date.now() + 2500;
+        setMatrixStatus('Offline / Paused ⚪');
+      })
+      .finally(() => {
+        isTransmittingRef.current = false;
+      });
+  }, [syncToMatrix]);
 
   // =========================================================================
   // Game Initializers & Logic
   // =========================================================================
   const getSpeedMs = () => {
     if (activeGame === 'snake') {
-      if (speedLevel === 'slow') return 180;
-      if (speedLevel === 'fast') return 90;
-      return 130;
+      if (speedLevel === 'slow') return 160;
+      if (speedLevel === 'fast') return 85;
+      return 120;
     }
     if (activeGame === 'pong') {
-      if (speedLevel === 'slow') return 130;
-      if (speedLevel === 'fast') return 70;
-      return 100;
+      if (speedLevel === 'slow') return 120;
+      if (speedLevel === 'fast') return 65;
+      return 90;
     }
     if (activeGame === 'defender') {
-      if (speedLevel === 'slow') return 120;
-      if (speedLevel === 'fast') return 60;
-      return 85;
+      if (speedLevel === 'slow') return 110;
+      if (speedLevel === 'fast') return 55;
+      return 75;
     }
     if (activeGame === 'breaker') {
-      if (speedLevel === 'slow') return 130;
-      if (speedLevel === 'fast') return 75;
-      return 100;
+      if (speedLevel === 'slow') return 110;
+      if (speedLevel === 'fast') return 65;
+      return 85;
     }
-    return 120;
+    return 100;
   };
 
   const spawnFood = (snake) => {
@@ -257,7 +248,6 @@ export default function GameControl({ onFrameUpdate, onToast }) {
       setLives(3);
       s.breakPaddleX = 12;
       s.breakBall = { x: 15, y: 7, vx: 1, vy: -1 };
-      // 2 rows of colored bricks across 30 columns
       const bricks = [];
       for (let y = 0; y < 2; y++) {
         for (let x = 0; x < MATRIX_WIDTH; x++) {
@@ -285,14 +275,14 @@ export default function GameControl({ onFrameUpdate, onToast }) {
     };
 
     if (gameId === 'snake') {
-      // Render Food (Pulsing glowing neon pink)
+      // Food (glowing magenta)
       setPixel(s.snakeFood.x, s.snakeFood.y, [255, 0, 127]);
 
-      // Render Body (Neon Green)
+      // Body (Neon Green)
       for (let i = 1; i < s.snake.length; i++) {
         setPixel(s.snake[i].x, s.snake[i].y, [0, 255, 120]);
       }
-      // Render Head (Cyan / White)
+      // Head (Cyan / White)
       if (s.snake.length > 0) {
         setPixel(s.snake[0].x, s.snake[0].y, [0, 240, 255]);
       }
@@ -304,22 +294,22 @@ export default function GameControl({ onFrameUpdate, onToast }) {
       // Ball (Neon Yellow)
       setPixel(Math.round(s.pongBall.x), Math.round(s.pongBall.y), [255, 240, 0]);
 
-      // Subtle right wall bounce markers
+      // Right wall markers
       for (let y = 0; y < MATRIX_HEIGHT; y += 2) {
         setPixel(MATRIX_WIDTH - 1, y, [15, 25, 45]);
       }
     } else if (gameId === 'defender') {
-      // Player Ship (2 pixels cyan + 1 pixel amber thruster)
-      setPixel(0, s.defPlayerY, [255, 120, 0]); // Thruster
-      setPixel(1, s.defPlayerY, [0, 240, 255]); // Core
-      setPixel(2, s.defPlayerY, [255, 255, 255]); // Nose
+      // Player Ship
+      setPixel(0, s.defPlayerY, [255, 120, 0]);
+      setPixel(1, s.defPlayerY, [0, 240, 255]);
+      setPixel(2, s.defPlayerY, [255, 255, 255]);
 
-      // Bullets (Neon Pink)
+      // Bullets
       s.defBullets.forEach((b) => {
         setPixel(b.x, b.y, [255, 0, 150]);
       });
 
-      // Enemies (Neon Red / Orange)
+      // Enemies
       s.defEnemies.forEach((e) => {
         setPixel(e.x, e.y, e.color || [255, 50, 70]);
       });
@@ -329,7 +319,7 @@ export default function GameControl({ onFrameUpdate, onToast }) {
         if (b.active) setPixel(b.x, b.y, b.color);
       });
 
-      // Paddle on bottom row (row 9)
+      // Paddle on row 9
       for (let i = 0; i < s.breakPaddleW; i++) {
         setPixel(s.breakPaddleX + i, MATRIX_HEIGHT - 1, [0, 240, 255]);
       }
@@ -338,8 +328,10 @@ export default function GameControl({ onFrameUpdate, onToast }) {
       setPixel(Math.round(s.breakBall.x), Math.round(s.breakBall.y), [255, 240, 0]);
     }
 
-    // Push to live Virtual Simulator & Hardware Matrix
+    // Immediately push to Live Canvas Simulator (0ms delay)
     if (onFrameUpdate) onFrameUpdate(grid);
+
+    // Throttle transmission to hardware in background
     pushFrameToHardware(grid);
   }, [activeGame, onFrameUpdate, pushFrameToHardware]);
 
@@ -373,7 +365,7 @@ export default function GameControl({ onFrameUpdate, onToast }) {
     // Eat Food?
     if (head.x === s.snakeFood.x && head.y === s.snakeFood.y) {
       sfx.score();
-      triggerHaptic(40);
+      triggerHaptic(30);
       setScore((sc) => {
         const next = sc + 10;
         updateHighScore(next);
@@ -399,18 +391,15 @@ export default function GameControl({ onFrameUpdate, onToast }) {
     if (y <= 0) {
       y = 0;
       vy = -vy;
-      sfx.move();
     } else if (y >= MATRIX_HEIGHT - 1) {
       y = MATRIX_HEIGHT - 1;
       vy = -vy;
-      sfx.move();
     }
 
     // Right wall bounce
     if (x >= MATRIX_WIDTH - 1) {
       x = MATRIX_WIDTH - 1;
       vx = -vx;
-      sfx.move();
     }
 
     // Paddle Hit on Column 0
@@ -419,7 +408,7 @@ export default function GameControl({ onFrameUpdate, onToast }) {
         x = 1;
         vx = Math.abs(vx); // Bounce right
         sfx.score();
-        triggerHaptic(35);
+        triggerHaptic(25);
         setScore((sc) => {
           const next = sc + 5;
           updateHighScore(next);
@@ -428,13 +417,12 @@ export default function GameControl({ onFrameUpdate, onToast }) {
       } else if (x < 0) {
         // Missed paddle!
         sfx.hit();
-        triggerHaptic(70);
+        triggerHaptic(60);
         setLives((lv) => {
           const rem = lv - 1;
           if (rem <= 0) {
             handleGameOver();
           } else {
-            // Reset ball to center
             s.pongBall = { x: 15, y: 5, vx: 1, vy: Math.random() > 0.5 ? 1 : -1 };
           }
           return rem;
@@ -451,7 +439,7 @@ export default function GameControl({ onFrameUpdate, onToast }) {
     const s = stateRef.current;
     s.defTickCounter++;
 
-    // Move Bullets
+    // Move Bullets (+2)
     const newBullets = [];
     s.defBullets.forEach((b) => {
       const nextX = b.x + 2;
@@ -460,7 +448,7 @@ export default function GameControl({ onFrameUpdate, onToast }) {
       }
     });
 
-    // Spawn Enemies (every 6 ticks)
+    // Spawn Enemies
     if (s.defTickCounter % 6 === 0) {
       const spawnY = Math.floor(Math.random() * MATRIX_HEIGHT);
       s.defEnemies.push({
@@ -470,16 +458,15 @@ export default function GameControl({ onFrameUpdate, onToast }) {
       });
     }
 
-    // Move Enemies left (every 2 ticks)
+    // Move Enemies left (-1)
     let enemies = s.defEnemies;
     if (s.defTickCounter % 2 === 0) {
       const movedEnemies = [];
       for (const e of enemies) {
         const nextX = e.x - 1;
-        // Check collision with ship
         if (nextX <= 2 && e.y === s.defPlayerY) {
           sfx.hit();
-          triggerHaptic(60);
+          triggerHaptic(50);
           setLives((lv) => {
             const rem = lv - 1;
             if (rem <= 0) handleGameOver();
@@ -503,7 +490,7 @@ export default function GameControl({ onFrameUpdate, onToast }) {
         if (Math.abs(bullet.x - enemy.x) <= 1 && bullet.y === enemy.y) {
           hit = true;
           sfx.score();
-          triggerHaptic(40);
+          triggerHaptic(30);
           setScore((sc) => {
             const next = sc + 10;
             updateHighScore(next);
@@ -529,14 +516,14 @@ export default function GameControl({ onFrameUpdate, onToast }) {
     x += vx;
     y += vy;
 
-    // Bounce off Left / Right walls
-    if (x <= 0) { x = 0; vx = -vx; sfx.move(); }
-    else if (x >= MATRIX_WIDTH - 1) { x = MATRIX_WIDTH - 1; vx = -vx; sfx.move(); }
+    // Walls
+    if (x <= 0) { x = 0; vx = -vx; }
+    else if (x >= MATRIX_WIDTH - 1) { x = MATRIX_WIDTH - 1; vx = -vx; }
 
-    // Bounce off Ceiling
-    if (y <= 0) { y = 0; vy = -vy; sfx.move(); }
+    // Ceiling
+    if (y <= 0) { y = 0; vy = -vy; }
 
-    // Brick Collision Check
+    // Brick Collision
     const ballRoundX = Math.round(x);
     const ballRoundY = Math.round(y);
     const hitBrick = s.breakBricks.find(
@@ -547,14 +534,13 @@ export default function GameControl({ onFrameUpdate, onToast }) {
       hitBrick.active = false;
       vy = -vy;
       sfx.score();
-      triggerHaptic(30);
+      triggerHaptic(25);
       setScore((sc) => {
         const next = sc + 15;
         updateHighScore(next);
         return next;
       });
 
-      // Win condition: all bricks destroyed
       if (s.breakBricks.every((b) => !b.active)) {
         sfx.score();
         onToast({ type: 'success', message: '🏆 YOU CLEARED ALL BRICKS!' });
@@ -568,18 +554,16 @@ export default function GameControl({ onFrameUpdate, onToast }) {
       if (x >= s.breakPaddleX && x < s.breakPaddleX + s.breakPaddleW) {
         y = MATRIX_HEIGHT - 2;
         vy = -Math.abs(vy);
-        sfx.move();
-        triggerHaptic(25);
+        triggerHaptic(20);
       } else {
-        // Missed Paddle!
+        // Missed Paddle
         sfx.hit();
-        triggerHaptic(70);
+        triggerHaptic(60);
         setLives((lv) => {
           const rem = lv - 1;
           if (rem <= 0) {
             handleGameOver();
           } else {
-            // Reset ball onto paddle
             s.breakBall = { x: s.breakPaddleX + 2, y: 7, vx: 1, vy: -1 };
           }
           return rem;
@@ -629,7 +613,7 @@ export default function GameControl({ onFrameUpdate, onToast }) {
     initGame(activeGame);
   };
 
-  // Interval manager
+  // Interval Manager
   useEffect(() => {
     if (gameState === 'playing') {
       const ms = getSpeedMs();
@@ -651,34 +635,28 @@ export default function GameControl({ onFrameUpdate, onToast }) {
   };
 
   // =========================================================================
-  // Phone Joystick & Hardware Input Handlers
+  // Phone Joystick & Input Handlers
   // =========================================================================
-  // Snake Input
   const handleSnakeInput = (dir) => {
     const s = stateRef.current;
-    triggerHaptic(20);
-    sfx.move();
+    triggerHaptic(15);
     if (dir === 'UP' && s.snakeDir !== 'DOWN') s.snakeNextDir = 'UP';
     else if (dir === 'DOWN' && s.snakeDir !== 'UP') s.snakeNextDir = 'DOWN';
     else if (dir === 'LEFT' && s.snakeDir !== 'RIGHT') s.snakeNextDir = 'LEFT';
     else if (dir === 'RIGHT' && s.snakeDir !== 'LEFT') s.snakeNextDir = 'RIGHT';
   };
 
-  // Pong Input
   const handlePongMove = (delta) => {
     const s = stateRef.current;
-    triggerHaptic(20);
-    sfx.move();
+    triggerHaptic(15);
     const nextY = Math.max(0, Math.min(MATRIX_HEIGHT - s.pongPaddleH, s.pongPaddleY + delta));
     s.pongPaddleY = nextY;
     renderCurrentGame('pong');
   };
 
-  // Galaxy Defender Input
   const handleDefenderMove = (delta) => {
     const s = stateRef.current;
-    triggerHaptic(20);
-    sfx.move();
+    triggerHaptic(15);
     const nextY = Math.max(0, Math.min(MATRIX_HEIGHT - 1, s.defPlayerY + delta));
     s.defPlayerY = nextY;
     renderCurrentGame('defender');
@@ -686,17 +664,15 @@ export default function GameControl({ onFrameUpdate, onToast }) {
 
   const handleDefenderFire = () => {
     const s = stateRef.current;
-    triggerHaptic(30);
+    triggerHaptic(25);
     sfx.fire();
     s.defBullets.push({ x: 3, y: s.defPlayerY });
     renderCurrentGame('defender');
   };
 
-  // Brick Breaker Input
   const handleBreakerMove = (delta) => {
     const s = stateRef.current;
-    triggerHaptic(20);
-    sfx.move();
+    triggerHaptic(15);
     const nextX = Math.max(0, Math.min(MATRIX_WIDTH - s.breakPaddleW, s.breakPaddleX + delta));
     s.breakPaddleX = nextX;
     renderCurrentGame('breaker');
@@ -735,10 +711,12 @@ export default function GameControl({ onFrameUpdate, onToast }) {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [gameState, activeGame]);
 
-  // Touch button action helper that prevents screen zoom/delay
+  // Touch button action helper with instant response
   const createTouchHandler = (actionFn) => ({
-    onMouseDown: (e) => { e.preventDefault(); actionFn(); },
-    onTouchStart: (e) => { e.preventDefault(); actionFn(); }
+    onPointerDown: (e) => {
+      e.preventDefault();
+      actionFn();
+    }
   });
 
   return (
@@ -784,7 +762,7 @@ export default function GameControl({ onFrameUpdate, onToast }) {
           )}
         </div>
 
-        {/* Action Controls (Play / Pause / Reset) */}
+        {/* Action Controls */}
         <div className="game-hud-actions">
           {gameState !== 'playing' ? (
             <button
@@ -838,7 +816,7 @@ export default function GameControl({ onFrameUpdate, onToast }) {
           />
           <span className="toggle-slider" />
           <span className="toggle-label">
-            Stream to Physical LED Matrix (WS2812B)
+            Stream to Hardware Matrix (WS2812B)
           </span>
         </label>
 
@@ -846,10 +824,10 @@ export default function GameControl({ onFrameUpdate, onToast }) {
           {syncToMatrix ? (
             <span className="stream-online">
               <span className="status-pulse-dot online" />
-              Hardware Stream Active {transmittingFps > 0 ? `(${transmittingFps} fps)` : ''}
+              Matrix Stream: {matrixStatus}
             </span>
           ) : (
-            <span className="stream-paused">⚪ Simulator Only</span>
+            <span className="stream-paused">⚪ Simulator Only (Fastest)</span>
           )}
         </div>
 
@@ -869,7 +847,6 @@ export default function GameControl({ onFrameUpdate, onToast }) {
 
       {/* ===================================================================
           PHONE RETRO JOYSTICK / GAMEPAD CONSOLE
-          Custom tailored on-screen controls for each game!
           =================================================================== */}
       <div className="gamepad-chassis">
         <div className="gamepad-header-row">
@@ -951,7 +928,6 @@ export default function GameControl({ onFrameUpdate, onToast }) {
         {/* 3. GALAXY DEFENDER GAMEPAD: DUAL-HAND COMBAT CONTROLLER */}
         {activeGame === 'defender' && (
           <div className="dual-hand-controller">
-            {/* Left Hand: Vertical Thrusters */}
             <div className="hand-cluster">
               <span className="cluster-label">THRUSTERS</span>
               <div className="thrust-button-pair">
@@ -972,7 +948,6 @@ export default function GameControl({ onFrameUpdate, onToast }) {
               </div>
             </div>
 
-            {/* Right Hand: Action Button */}
             <div className="hand-cluster">
               <span className="cluster-label">WEAPON SYSTEM</span>
               <button
@@ -1043,3 +1018,5 @@ export default function GameControl({ onFrameUpdate, onToast }) {
     </div>
   );
 }
+
+export default memo(GameControl);

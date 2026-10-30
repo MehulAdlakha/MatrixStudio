@@ -5,9 +5,16 @@
 
 const getBackendUrl = () => {
   if (typeof window !== 'undefined') {
-    // If user configured a custom LAN IP in localStorage, prioritize it
+    // 1. If user configured a custom LAN IP in localStorage, prioritize it
     const storedUrl = localStorage.getItem('matrix_backend_url');
     if (storedUrl) return storedUrl.replace(/\/+$/, '');
+
+    // 2. Dynamic LAN detection: if opened from a phone/tablet on Wi-Fi (e.g. 172.x.x.x or 192.168.x.x),
+    // automatically point to backend port 5000 on that same host instead of phone's localhost
+    const host = window.location.hostname;
+    if (host && host !== 'localhost' && host !== '127.0.0.1') {
+      return `http://${host}:5000`;
+    }
   }
   return (process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:5000').replace(/\/+$/, '');
 };
@@ -25,26 +32,35 @@ export const setCustomBackendUrl = (url) => {
 export const getActiveBackendUrl = () => getBackendUrl();
 
 /**
- * Send a display command to the Matrix backend
+ * Send a display command to the Matrix backend with timeout protection
  */
-export async function sendCommand(type, params) {
+export async function sendCommand(type, params, options = {}) {
   const url = `${getBackendUrl()}/api/commands`;
+  const timeoutMs = options.timeoutMs || 2500;
+  const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+
   try {
     const res = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({ type, params })
+      body: JSON.stringify({ type, params }),
+      signal: controller ? controller.signal : undefined
     });
 
+    if (timer) clearTimeout(timer);
     const data = await res.json();
     if (!res.ok) {
       throw new Error(data.error || `HTTP ${res.status}: Failed to submit command`);
     }
     return data;
   } catch (err) {
-    console.error('API Error [sendCommand]:', err);
+    if (timer) clearTimeout(timer);
+    if (err.name === 'AbortError') {
+      throw new Error(`Command timeout (${timeoutMs}ms)`);
+    }
     throw err;
   }
 }
