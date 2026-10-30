@@ -785,8 +785,10 @@ void applyPendingCommand() {
     showStrip();
   }
 
-  // Persist updated mode and settings into onboard Flash memory
-  saveStateToNVS();
+  // Persist updated mode and settings into onboard Flash memory (skip for real-time streaming frames to maximize FPS)
+  if (currentMode != "image") {
+    saveStateToNVS();
+  }
 }
 
 void updateActiveLoop() {
@@ -896,8 +898,8 @@ void networkWorker(void* param) {
     }
 
     // Dynamic Gaming Poll Rate: Accelerates during active gameplay stream!
-    // Local HTTP: 45ms (~22 FPS Zero-Lag) | Cloud HTTPS: 400ms
-    uint32_t activeInterval = (millis() < turboUntil) ? (isHttps ? 400 : 45) : basePollInterval;
+    // Local HTTP: 30ms (~33 FPS Max-Rate) | Cloud HTTPS: 350ms
+    uint32_t activeInterval = (millis() < turboUntil) ? (isHttps ? 350 : 30) : basePollInterval;
 
     // Unified poll: fetches command + reports heartbeat + auto-acks lastId in ONE request!
     if (now - lastPollTime >= activeInterval) {
@@ -907,7 +909,8 @@ void networkWorker(void* param) {
                    "?lastId=" + lastExecutedId + 
                    "&rssi=" + String(WiFi.RSSI()) + 
                    "&uptime=" + String(millis() / 1000) + 
-                   "&ip=" + WiFi.localIP().toString();
+                   "&ip=" + WiFi.localIP().toString() + 
+                   "&fps=" + String(currentFps);
 
       if (isHttps) {
         http.begin(secClient, url);
@@ -1101,6 +1104,11 @@ void setup() {
   );
 }
 
+// Real-time Hardware FPS Tracker
+volatile uint16_t frameCount = 0;
+volatile uint16_t currentFps = 0;
+uint32_t lastFpsCalcTime = 0;
+
 // =========================================================================
 // Core 1 Main Loop: 100% Dedicated to 60 FPS LED Animations
 // =========================================================================
@@ -1109,9 +1117,19 @@ void loop() {
   if (hasNewCommand) {
     hasNewCommand = false;
     applyPendingCommand();
+    frameCount++;
   }
 
   // Run the active effect in endless loop
   updateActiveLoop();
-  delay(5); // Crucial: Yields to FreeRTOS IDLE1 task to feed the ESP32 Task Watchdog Timer
+
+  // Calculate live FPS once per second
+  uint32_t now = millis();
+  if (now - lastFpsCalcTime >= 1000) {
+    currentFps = frameCount;
+    frameCount = 0;
+    lastFpsCalcTime = now;
+  }
+
+  delay(2); // Yields to FreeRTOS IDLE1 task
 }

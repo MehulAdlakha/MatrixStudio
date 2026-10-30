@@ -99,7 +99,7 @@ router.delete('/commands/history', (req, res) => {
  * Endpoint polled by ESP32 (~500ms) to check for pending unacknowledged commands
  */
 router.get('/device/poll', (req, res) => {
-  const { lastId, rssi, uptime, ip } = req.query;
+  const { lastId, rssi, uptime, ip, fps } = req.query;
 
   // Auto-acknowledge command as soon as ESP32 reports it as executed
   if (lastId) {
@@ -112,7 +112,8 @@ router.get('/device/poll', (req, res) => {
     online: true,
     ...(rssi ? { rssi: parseInt(rssi, 10) } : {}),
     ...(uptime ? { uptime: parseInt(uptime, 10) } : {}),
-    ...(ip ? { ip: String(ip) } : {})
+    ...(ip ? { ip: String(ip) } : {}),
+    ...(fps ? { fps: parseInt(fps, 10) } : {})
   });
 
   const pending = store.getPendingCommandForDevice(lastId);

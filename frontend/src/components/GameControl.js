@@ -638,14 +638,14 @@ function GameControl({ onFrameUpdate, onToast }) {
     if (gameState === 'playing') {
       let ms;
       if (activeGame === 'snake') {
-        // Slow and steady pixel-by-pixel pace (allows complete frame sync on LED matrix)
-        ms = speedLevel === 'slow' ? 460 : speedLevel === 'fast' ? 270 : 360;
+        // High-FPS calibrated pixel-by-pixel speeds
+        ms = speedLevel === 'slow' ? 380 : speedLevel === 'fast' ? 170 : speedLevel === 'turbo' ? 100 : 260;
       } else if (activeGame === 'pong') {
-        ms = 85;
+        ms = 45; // ~22 FPS arcade fluidity
       } else if (activeGame === 'defender') {
-        ms = 70;
+        ms = 40; // ~25 FPS high refresh
       } else if (activeGame === 'breaker') {
-        ms = 80;
+        ms = 45; // ~22 FPS arcade fluidity
       }
 
       gameLoopRef.current = setInterval(() => {
@@ -818,7 +818,7 @@ function GameControl({ onFrameUpdate, onToast }) {
                     type="button"
                     className={`speed-pill-btn ${speedLevel === 'slow' ? 'active' : ''}`}
                     onClick={() => setSpeedLevel('slow')}
-                    title="Slow Pace (460ms/pixel)"
+                    title="Slow Pace (380ms ~ 2.6 FPS)"
                   >
                     🐢 Slow
                   </button>
@@ -826,7 +826,7 @@ function GameControl({ onFrameUpdate, onToast }) {
                     type="button"
                     className={`speed-pill-btn ${speedLevel === 'normal' ? 'active' : ''}`}
                     onClick={() => setSpeedLevel('normal')}
-                    title="Normal Pace (360ms/pixel)"
+                    title="Normal Pace (260ms ~ 3.8 FPS)"
                   >
                     🟢 Normal
                   </button>
@@ -834,9 +834,17 @@ function GameControl({ onFrameUpdate, onToast }) {
                     type="button"
                     className={`speed-pill-btn ${speedLevel === 'fast' ? 'active' : ''}`}
                     onClick={() => setSpeedLevel('fast')}
-                    title="Brisk Pace (270ms/pixel)"
+                    title="Fast Pace (170ms ~ 5.9 FPS)"
                   >
                     ⚡ Fast
+                  </button>
+                  <button
+                    type="button"
+                    className={`speed-pill-btn ${speedLevel === 'turbo' ? 'active' : ''}`}
+                    onClick={() => setSpeedLevel('turbo')}
+                    title="Turbo Pace (100ms ~ 10 FPS)"
+                  >
+                    🚀 Turbo
                   </button>
                 </div>
               </div>
