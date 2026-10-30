@@ -86,6 +86,33 @@ const GAMES = [
   { id: 'breaker', name: 'Brick Breaker', icon: '🧱', tag: 'Retro Breakout' }
 ];
 
+// 5x7 Arcade Font Glyphs for Game Over Banner
+const GAME_OVER_GLYPHS = {
+  'G': [0x3E, 0x41, 0x49, 0x49, 0x7A],
+  'A': [0x7E, 0x11, 0x11, 0x11, 0x7E],
+  'M': [0x7F, 0x02, 0x0C, 0x02, 0x7F],
+  'E': [0x7F, 0x49, 0x49, 0x49, 0x41],
+  ' ': [0x00, 0x00, 0x00],
+  'O': [0x3E, 0x41, 0x41, 0x41, 0x3E],
+  'V': [0x1F, 0x20, 0x40, 0x20, 0x1F],
+  'R': [0x7F, 0x09, 0x19, 0x29, 0x46],
+  '!': [0x00, 0x5F, 0x00]
+};
+
+const buildGameOverColumns = () => {
+  const text = 'GAME OVER';
+  const cols = [0x00, 0x00];
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    const glyph = GAME_OVER_GLYPHS[ch] || [0x00, 0x00, 0x00];
+    glyph.forEach((byte) => cols.push(byte));
+    cols.push(0x00); // 1-column spacing between characters
+  }
+  cols.push(0x00, 0x00);
+  return cols;
+};
+const GAME_OVER_COLS = buildGameOverColumns();
+
 function GameControl({ onFrameUpdate, onToast }) {
   const [activeGame, setActiveGame] = useState('snake');
   const [gameState, setGameState] = useState('ready'); // 'ready' | 'playing' | 'paused' | 'gameover'
@@ -104,6 +131,8 @@ function GameControl({ onFrameUpdate, onToast }) {
   const gameLoopRef = useRef(null);
   const isTransmittingRef = useRef(false);
   const pendingFrameRef = useRef(null);
+  const gameOverTimerRef = useRef(null);
+  const gameOverAnimRef = useRef(null);
 
   // Continuous Hold Movement References (Tap: 1 px | Hold: continuous px-by-px)
   const holdTimerRef = useRef(null);
@@ -306,7 +335,55 @@ function GameControl({ onFrameUpdate, onToast }) {
     pushFrameToHardware(grid);
   }, [activeGame, onFrameUpdate, pushFrameToHardware]);
 
+  // Clean stop for Game Over displays
+  const clearGameOverDisplay = useCallback(() => {
+    if (gameOverTimerRef.current) {
+      clearTimeout(gameOverTimerRef.current);
+      gameOverTimerRef.current = null;
+    }
+    if (gameOverAnimRef.current) {
+      clearInterval(gameOverAnimRef.current);
+      gameOverAnimRef.current = null;
+    }
+  }, []);
+
+  // Web Simulator Real-time Scrolling "GAME OVER" Text Animation
+  const startGameOverWebAnimation = useCallback(() => {
+    if (gameOverAnimRef.current) clearInterval(gameOverAnimRef.current);
+
+    let scrollX = MATRIX_WIDTH;
+    const totalCols = GAME_OVER_COLS.length;
+
+    gameOverAnimRef.current = setInterval(() => {
+      const grid = createEmptyGrid();
+
+      // Render red columns at scrollX
+      for (let c = 0; c < totalCols; c++) {
+        const screenX = scrollX + c;
+        if (screenX >= 0 && screenX < MATRIX_WIDTH) {
+          const colData = GAME_OVER_COLS[c];
+          for (let row = 0; row < 7; row++) {
+            if ((colData >> row) & 1) {
+              const y = row + 1; // Center 7-row font inside 10-row matrix
+              if (y >= 0 && y < MATRIX_HEIGHT) {
+                grid[y * MATRIX_WIDTH + screenX] = [255, 10, 45]; // Glowing arcade red
+              }
+            }
+          }
+        }
+      }
+
+      if (onFrameUpdate) onFrameUpdate(grid);
+
+      scrollX--;
+      if (scrollX < -totalCols) {
+        scrollX = MATRIX_WIDTH;
+      }
+    }, 45);
+  }, [onFrameUpdate]);
+
   const initGame = useCallback((gameId = activeGame) => {
+    clearGameOverDisplay();
     const s = stateRef.current;
     s.isGameOver = false;
     setScore(0);
@@ -371,8 +448,9 @@ function GameControl({ onFrameUpdate, onToast }) {
     sfx.gameOver();
     stopContinuousPress();
     if (gameLoopRef.current) clearInterval(gameLoopRef.current);
+    clearGameOverDisplay();
 
-    // Flash snake red on crash
+    // 1. Initial crash impact frame (red highlight)
     const deathGrid = createEmptyGrid();
     if (activeGame === 'snake') {
       if (reason === 'boundary') {
@@ -392,6 +470,14 @@ function GameControl({ onFrameUpdate, onToast }) {
       });
       if (onFrameUpdate) onFrameUpdate(deathGrid);
       pushFrameToHardware(deathGrid);
+    } else {
+      // For other games, flash boundary red
+      for (let x = 0; x < MATRIX_WIDTH; x++) {
+        deathGrid[x] = [255, 20, 20];
+        deathGrid[(MATRIX_HEIGHT - 1) * MATRIX_WIDTH + x] = [255, 20, 20];
+      }
+      if (onFrameUpdate) onFrameUpdate(deathGrid);
+      pushFrameToHardware(deathGrid);
     }
 
     const message = reason === 'boundary'
@@ -403,6 +489,25 @@ function GameControl({ onFrameUpdate, onToast }) {
     if (onToast) {
       onToast({ type: 'warning', message });
     }
+
+    // 2. Display "GAME OVER" on LED matrix & web simulator after brief crash moment
+    gameOverTimerRef.current = setTimeout(() => {
+      // Send 60 FPS scrolling text command to ESP32 physical hardware matrix
+      if (syncToMatrix) {
+        sendCommand('text', {
+          text: 'GAME OVER',
+          color: '#ff0033',
+          bgColor: '#000000',
+          speed: 45,
+          mode: 'scroll_left',
+          font: 'bold',
+          yOffset: 1
+        }).catch(() => {});
+      }
+
+      // Animate scrolling "GAME OVER" on local web canvas simulator
+      startGameOverWebAnimation();
+    }, 850);
   };
 
   // =========================================================================
@@ -730,11 +835,13 @@ function GameControl({ onFrameUpdate, onToast }) {
 
     return () => {
       if (gameLoopRef.current) clearInterval(gameLoopRef.current);
+      clearGameOverDisplay();
     };
-  }, [gameState, activeGame, speedLevel]);
+  }, [gameState, activeGame, speedLevel, clearGameOverDisplay]);
 
   const startGame = () => {
     sfx.init();
+    clearGameOverDisplay();
     if (gameState === 'gameover' || gameState === 'ready') {
       initGame(activeGame);
     }
@@ -748,6 +855,7 @@ function GameControl({ onFrameUpdate, onToast }) {
   };
 
   const resetGame = () => {
+    clearGameOverDisplay();
     stopContinuousPress();
     if (gameLoopRef.current) clearInterval(gameLoopRef.current);
     setGameState('ready');
@@ -755,6 +863,7 @@ function GameControl({ onFrameUpdate, onToast }) {
   };
 
   const switchGame = (gameId) => {
+    clearGameOverDisplay();
     stopContinuousPress();
     if (gameLoopRef.current) clearInterval(gameLoopRef.current);
     setActiveGame(gameId);
