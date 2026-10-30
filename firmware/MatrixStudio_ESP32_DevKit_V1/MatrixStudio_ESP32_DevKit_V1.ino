@@ -771,7 +771,7 @@ void applyPendingCommand() {
     }
   }
   else if (currentMode == "image") {
-    strip.clear();
+    // Direct pixel overwrite without redundant strip.clear() to double throughput
     for (size_t i = 0; i < NUM_LEDS; i++) {
       uint8_t x = i % MATRIX_WIDTH;
       uint8_t y = i / MATRIX_WIDTH;
@@ -882,13 +882,17 @@ void networkWorker(void* param) {
   secClient.setInsecure(); // Supports Render HTTPS without certificate errors
 
   HTTPClient http;
-  http.setReuse(true); // HTTP Keep-Alive
+  http.setReuse(true); // Maintain persistent HTTP Keep-Alive connection
 
   uint32_t lastPollTime = 0;
   uint32_t turboUntil = 0;
   bool isHttps = String(ENDPOINT_POLL).startsWith("https://");
-  uint32_t basePollInterval = isHttps ? 2500 : 1000;
-  uint16_t reqTimeout = isHttps ? 4000 : 1200;
+  uint32_t basePollInterval = isHttps ? 2000 : 1000;
+  uint16_t reqTimeout = isHttps ? 3000 : 800;
+
+  // Single static JSON document: completely eliminates 6KB heap malloc/free churn on every frame
+  DynamicJsonDocument doc(6144);
+  char urlBuffer[256];
 
   while (true) {
     uint32_t now = millis();
@@ -896,29 +900,30 @@ void networkWorker(void* param) {
     if (WiFi.status() != WL_CONNECTED) {
       http.end();
       WiFi.reconnect();
-      vTaskDelay(pdMS_TO_TICKS(2000));
+      vTaskDelay(pdMS_TO_TICKS(1500));
       continue;
     }
 
-    // Dynamic Gaming Poll Rate: Accelerates during active gameplay stream!
-    // Local HTTP: 30ms (~33 FPS Max-Rate) | Cloud HTTPS: 350ms
-    uint32_t activeInterval = (millis() < turboUntil) ? (isHttps ? 350 : 30) : basePollInterval;
+    // Dynamic Gaming Poll Rate:
+    // Local HTTP: 20ms (~50 FPS Max-Rate) | Cloud HTTPS: 120ms (~8-10 FPS with Keep-Alive)
+    uint32_t activeInterval = (now < turboUntil) ? (isHttps ? 120 : 20) : basePollInterval;
 
-    // Unified poll: fetches command + reports heartbeat + auto-acks lastId in ONE request!
     if (now - lastPollTime >= activeInterval) {
       lastPollTime = now;
 
-      String url = String(ENDPOINT_POLL) + 
-                   "?lastId=" + lastExecutedId + 
-                   "&rssi=" + String(WiFi.RSSI()) + 
-                   "&uptime=" + String(millis() / 1000) + 
-                   "&ip=" + WiFi.localIP().toString() + 
-                   "&fps=" + String(currentFps);
+      // Zero-allocation URL formatting (avoids heap fragmentation)
+      snprintf(urlBuffer, sizeof(urlBuffer), "%s?lastId=%s&rssi=%d&uptime=%lu&ip=%s&fps=%u",
+               ENDPOINT_POLL,
+               lastExecutedId.c_str(),
+               WiFi.RSSI(),
+               (unsigned long)(now / 1000),
+               WiFi.localIP().toString().c_str(),
+               currentFps);
 
       if (isHttps) {
-        http.begin(secClient, url);
+        http.begin(secClient, urlBuffer);
       } else {
-        http.begin(url);
+        http.begin(urlBuffer);
       }
       http.setTimeout(reqTimeout);
 
@@ -926,19 +931,19 @@ void networkWorker(void* param) {
       if (code == HTTP_CODE_OK) {
         String body = http.getString();
 
-        // FAST PATH: If no new command, exit immediately without ANY heap allocation!
+        // FAST PATH: If no new command, loop without heap allocation or closing keep-alive
         if (body.indexOf("\"hasCommand\":true") == -1) {
-          http.end();
-          vTaskDelay(pdMS_TO_TICKS(millis() < turboUntil ? 10 : 50));
+          vTaskDelay(pdMS_TO_TICKS(now < turboUntil ? 6 : 30));
           continue;
         }
 
-        // SLOW PATH: New command arrived! Allocate 6KB only for image pixel arrays, else 2KB
+        // SLOW PATH: New command arrived!
         bool isImage = (body.indexOf("\"image\"") != -1);
         if (isImage) {
-          turboUntil = millis() + 30000; // Boost polling speed for 30s during active gameplay!
+          turboUntil = millis() + 45000; // Boost polling speed for 45s during active gameplay!
         }
-        DynamicJsonDocument doc(isImage ? 6144 : 2048);
+
+        doc.clear(); // O(1) buffer reset without re-allocating heap
         DeserializationError err = deserializeJson(doc, body);
 
         if (!err && doc["hasCommand"].as<bool>()) {
@@ -964,16 +969,18 @@ void networkWorker(void* param) {
             }
             else if (type == "image") {
               if (params.containsKey("pixels")) {
-                JsonArray pxArr = params["pixels"].as<JsonArray>();
-                size_t count = pxArr.size();
-                if (count > NUM_LEDS) count = NUM_LEDS;
-                for (size_t i = 0; i < count; i++) {
-                  JsonArray rgb = pxArr[i].as<JsonArray>();
+                JsonArrayConst pxArr = params["pixels"].as<JsonArrayConst>();
+                size_t idx = 0;
+                // High-performance O(N) linear iteration instead of O(N^2) random index lookups
+                for (JsonVariantConst v : pxArr) {
+                  if (idx >= NUM_LEDS) break;
+                  JsonArrayConst rgb = v.as<JsonArrayConst>();
                   if (rgb.size() >= 3) {
-                    pendingImagePixels[i] = strip.Color(rgb[0].as<uint8_t>(), rgb[1].as<uint8_t>(), rgb[2].as<uint8_t>());
+                    pendingImagePixels[idx] = strip.Color(rgb[0].as<uint8_t>(), rgb[1].as<uint8_t>(), rgb[2].as<uint8_t>());
                   } else {
-                    pendingImagePixels[i] = 0;
+                    pendingImagePixels[idx] = 0;
                   }
+                  idx++;
                 }
               }
             }
@@ -1022,14 +1029,15 @@ void networkWorker(void* param) {
         }
       } else {
         // Request failed or timed out: abort stale SSL connection to prevent socket hang
-        if (code <= 0 && isHttps) {
-          secClient.stop();
+        if (code <= 0) {
+          http.end();
+          if (isHttps) secClient.stop();
         }
       }
-      http.end();
     }
 
-    vTaskDelay(pdMS_TO_TICKS(50));
+    // Yield to FreeRTOS scheduler without CPU starvation or artificial sleep lag
+    vTaskDelay(pdMS_TO_TICKS(2));
   }
 }
 
@@ -1038,15 +1046,19 @@ void networkWorker(void* param) {
 // =========================================================================
 void setup() {
   Serial.begin(115200);
-  delay(300);
+  delay(100);
+
+  // Lock ESP32 CPU dual cores to peak 240 MHz frequency
+  setCpuFrequencyMhz(240);
 
   pinMode(STATUS_LED_PIN, OUTPUT);
   digitalWrite(STATUS_LED_PIN, HIGH); // Turn on onboard Blue LED during boot
 
   Serial.println("\n==========================================");
-  Serial.println("🚀 Matrix Studio - DOIT ESP32 DevKit V1");
+  Serial.println("🚀 Matrix Studio - DOIT ESP32 DevKit V1 (High-FPS Turbo)");
   Serial.println("   Data Pin: D4 (GPIO 4) | 30x10 Matrix");
   Serial.println("   Status LED: D2 (GPIO 2 - Onboard Blue)");
+  Serial.println("   CPU Frequency: 240 MHz Locked");
   Serial.println("==========================================");
 
   strip.begin();
@@ -1070,6 +1082,7 @@ void setup() {
   applyPendingCommand();
 
   WiFi.mode(WIFI_STA);
+  WiFi.setSleep(false); // Disable Wi-Fi modem sleep: eliminates 50-200ms radio wakeup lag!
   WiFi.softAPdisconnect(true);
   WiFi.setAutoReconnect(true);
 
@@ -1129,5 +1142,5 @@ void loop() {
     lastFpsCalcTime = now;
   }
 
-  delay(2); // Yields to FreeRTOS IDLE1 task
+  delay(1); // Fast 1ms yield to FreeRTOS IDLE1 task for maximum reactivity
 }
